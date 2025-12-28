@@ -18,6 +18,9 @@ const App: React.FC = () => {
   const [state, setState] = useState<AppState>(INITIAL_STATE);
   const [history, setHistory] = useState<SavedTrip[]>([]);
   
+  // Controle local para inputs de texto permitindo espaços e quebras de linha nativas sem cursor pulando
+  const [localText, setLocalText] = useState<Record<string, string>>({});
+
   const [servicesOpen, setServicesOpen] = useState(false);
   const [cityAccordions, setCityAccordions] = useState<boolean[]>([false, false, false, false]);
   const [output, setOutput] = useState("");
@@ -103,16 +106,34 @@ const App: React.FC = () => {
   };
 
   const handleBulkUpdate = (index: number, type: 'name' | 'status', rawValue: string) => {
+    const key = `${index}-${type}`;
+    setLocalText(prev => ({ ...prev, [key]: rawValue }));
+
     const lines = rawValue.split('\n');
     setState(prev => {
       const newCities = [...prev.cities];
       const newClients = newCities[index].clients.map((cl, i) => ({
         ...cl,
-        [type]: lines[i] !== undefined ? lines[i].trim() : ""
+        [type]: lines[i] !== undefined ? lines[i] : ""
       }));
       newCities[index] = { ...newCities[index], clients: newClients };
       return { ...prev, cities: newCities };
     });
+  };
+
+  const getTextAreaValue = (index: number, type: 'name' | 'status') => {
+    const key = `${index}-${type}`;
+    if (localText[key] !== undefined) return localText[key];
+
+    const lines = state.cities[index].clients.map(c => c[type]);
+    let lastIndex = -1;
+    for (let i = 29; i >= 0; i--) {
+      if (lines[i] !== "") {
+        lastIndex = i;
+        break;
+      }
+    }
+    return lines.slice(0, lastIndex + 1).join('\n');
   };
 
   const handleServiceToggle = (service: string) => {
@@ -142,6 +163,7 @@ const App: React.FC = () => {
 
   const carregarViagem = (viagem: SavedTrip) => {
     setState(viagem.state);
+    setLocalText({});
     setActiveTab('form');
     setIsEncerramentoVisible(false);
     setOutput("");
@@ -151,6 +173,7 @@ const App: React.FC = () => {
 
   const carregarParaEncerramento = (viagem: SavedTrip) => {
     setState(viagem.state);
+    setLocalText({});
     setActiveTab('form');
     iniciarEncerramento();
     window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
@@ -193,9 +216,9 @@ const App: React.FC = () => {
       text += `${idx + 1}ª CIDADE: ${city.name.toUpperCase()}\n`;
       text += `----------------------------------------------------------------------------\n`;
       text += `ATENDIMENTOS AGENDADOS:\n`;
-      const filledClients = city.clients.filter(cl => cl.name);
+      const filledClients = city.clients.filter(cl => cl.name.trim());
       filledClients.forEach((cl, clIdx) => {
-        text += `${clIdx + 1}. ${cl.name.toUpperCase()}${cl.status ? ` - ${cl.status.toUpperCase()}` : ""}\n`;
+        text += `${clIdx + 1}. ${cl.name.trim().toUpperCase()}${cl.status.trim() ? ` - ${cl.status.trim().toUpperCase()}` : ""}\n`;
       });
       text += `\n`;
     });
@@ -207,7 +230,7 @@ const App: React.FC = () => {
     state.cities.forEach(city => {
       if (city.enabled && city.name) {
         city.clients.forEach((cl, clIdx) => {
-          if (cl.name) {
+          if (cl.name.trim()) {
             newFeedback.push({
               clientId: `${city.name}-${clIdx}`,
               status: 'REALIZADO',
@@ -240,12 +263,11 @@ const App: React.FC = () => {
       text += `----------------------------------------------------------------------------\n`;
       text += `ATENDIMENTOS AGENDADOS:\n`;
 
-      const filledClients = city.clients.filter(cl => cl.name);
+      const filledClients = city.clients.filter(cl => cl.name.trim());
       filledClients.forEach((cl, clIdx) => {
         const fb = feedback.find(f => f.clientId === `${city.name}-${clIdx}`);
-        // Remove underscore from NAO_REALIZADO status for the report
         const statusReport = fb?.status === 'NAO_REALIZADO' ? 'NAO REALIZADO' : fb?.status;
-        text += `${clIdx + 1}. ${cl.name.toUpperCase()}${cl.status ? ` - ${cl.status.toUpperCase()}` : ""} (${statusReport})\n`;
+        text += `${clIdx + 1}. ${cl.name.trim().toUpperCase()}${cl.status.trim() ? ` - ${cl.status.trim().toUpperCase()}` : ""} (${statusReport})\n`;
         if (fb?.status === 'REALIZADO') {
           text += `*O.S NA MESA DE: ${fb.attendantName || ""}\n`;
         } else {
@@ -269,32 +291,20 @@ const App: React.FC = () => {
           <head>
             <title>Impressão - Programação de Viagem</title>
             <style>
-              body { 
-                font-family: monospace; 
-                white-space: pre-wrap; 
-                padding: 20px; 
-                font-size: 14px;
-                line-height: 1.4;
-              }
-              @media print {
-                body { padding: 0; }
-              }
+              body { font-family: monospace; white-space: pre-wrap; padding: 20px; font-size: 14px; line-height: 1.4; }
+              @media print { body { padding: 0; } }
             </style>
           </head>
           <body>${text}</body>
         </html>
       `);
       printWindow.document.close();
-      printWindow.focus();
       printWindow.print();
-      printWindow.close();
-    } else {
-      alert("Por favor, habilite pop-ups para imprimir o conteúdo.");
     }
   };
 
   return (
-    <div className="max-w-4xl mx-auto p-4 space-y-6 pb-20 no-print text-gray-900">
+    <div className="max-w-4xl mx-auto p-4 space-y-6 pb-20 no-print text-gray-900 font-sans">
       <header className="text-center py-6 bg-blue-700 text-white rounded-xl shadow-lg border-b-4 border-blue-900">
         <h1 className="text-3xl font-extrabold uppercase tracking-tight">Programação de Viagem</h1>
         <p className="text-blue-200 text-sm mt-1 font-medium">abertura e fechamento de programações</p>
@@ -324,21 +334,21 @@ const App: React.FC = () => {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Data da Viagem</label>
-                <input type="date" value={state.date} onChange={e => updateState('date', e.target.value)} className="block w-full rounded-lg border-gray-300 bg-gray-50 p-3 border font-medium"/>
+                <input type="date" value={state.date} onChange={e => updateState('date', e.target.value)} className="block w-full rounded-lg border-gray-300 bg-gray-50 p-3 border font-medium outline-none focus:ring-2 focus:ring-blue-100"/>
               </div>
               <div>
                 <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Horário de Saída</label>
-                <input type="time" value={state.startTime} onChange={e => updateState('startTime', e.target.value)} className="block w-full rounded-lg border-gray-300 bg-gray-50 p-3 border font-medium"/>
+                <input type="time" value={state.startTime} onChange={e => updateState('startTime', e.target.value)} className="block w-full rounded-lg border-gray-300 bg-gray-50 p-3 border font-medium outline-none focus:ring-2 focus:ring-blue-100"/>
               </div>
               <div>
                 <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Técnico Responsável</label>
-                <select value={state.technician} onChange={e => updateState('technician', e.target.value)} className="block w-full rounded-lg border-gray-300 bg-gray-50 p-3 border font-medium">
+                <select value={state.technician} onChange={e => updateState('technician', e.target.value)} className="block w-full rounded-lg border-gray-300 bg-gray-50 p-3 border font-medium outline-none focus:ring-2 focus:ring-blue-100">
                   {TECHNICIANS.map(t => <option key={t} value={t}>{t || "Selecione..."}</option>)}
                 </select>
               </div>
               <div>
                 <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Auxiliar / Acompanhante</label>
-                <select value={state.assistant} onChange={e => updateState('assistant', e.target.value)} className="block w-full rounded-lg border-gray-300 bg-gray-50 p-3 border font-medium">
+                <select value={state.assistant} onChange={e => updateState('assistant', e.target.value)} className="block w-full rounded-lg border-gray-300 bg-gray-50 p-3 border font-medium outline-none focus:ring-2 focus:ring-blue-100">
                   {ASSISTANTS.map(a => <option key={a} value={a}>{a || "Selecione..."}</option>)}
                 </select>
               </div>
@@ -363,12 +373,11 @@ const App: React.FC = () => {
             )}
           </section>
 
-          {/* Materiais */}
+          {/* Lista de Materiais INTEGRAL */}
           <section className="bg-white p-5 rounded-xl shadow-md border-l-8 border-orange-500 space-y-6">
             <h2 className="font-bold text-gray-800 flex items-center text-lg"><i className="fas fa-box-open mr-3 text-orange-500"></i> LISTA DE MATERIAIS</h2>
             
             <div className="space-y-5">
-              {/* Seções Dinâmicas */}
               {([['onus', 'ONU', ONU_MODELS], ['onts', 'ONT', ONT_MODELS], ['routers', 'ROTEADOR', ROUTER_MODELS]] as const).map(([type, label, models]) => (
                 <div key={type} className="bg-gray-50 p-4 rounded-xl border border-gray-100">
                   <div className="flex items-center justify-between mb-3">
@@ -422,10 +431,10 @@ const App: React.FC = () => {
               </label>
             </div>
             
-            <textarea value={state.materials.note} onChange={e => updateMaterials({ note: e.target.value })} placeholder="Observações adicionais..." className="w-full rounded-lg border-gray-200 bg-gray-50 p-3 text-sm font-medium h-20"/>
+            <textarea value={state.materials.note} onChange={e => updateMaterials({ note: e.target.value })} placeholder="Observações adicionais sobre materiais..." className="w-full rounded-lg border-gray-300 bg-gray-50 p-3 text-sm font-medium h-20 outline-none focus:ring-2 focus:ring-orange-100"/>
           </section>
 
-          {/* Cidades */}
+          {/* Cidades e Atendimentos */}
           <section className="space-y-4">
             {state.cities.map((city, idx) => (
               <div key={idx} className="bg-white rounded-xl shadow-md border-l-8 border-indigo-500 overflow-hidden">
@@ -443,12 +452,12 @@ const App: React.FC = () => {
                     <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest border-b pb-1">Lista de Atendimentos (Cole ou Digite abaixo)</h4>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div className="space-y-1">
-                        <label className="text-[10px] font-bold text-indigo-400">NOMES DOS CLIENTES</label>
-                        <textarea value={city.clients.map(cl => cl.name).join('\n').replace(/\n+$/, '')} onChange={e => handleBulkUpdate(idx, 'name', e.target.value)} className="w-full h-40 p-3 border rounded-lg text-sm bg-gray-50 font-mono text-gray-800 focus:ring-2 focus:ring-indigo-100 outline-none resize-none"/>
+                        <label className="text-[10px] font-bold text-indigo-400">NOMES DOS CLIENTES (ENTER para nova linha)</label>
+                        <textarea value={getTextAreaValue(idx, 'name')} onChange={e => handleBulkUpdate(idx, 'name', e.target.value)} className="w-full h-40 p-3 border rounded-lg text-sm bg-gray-50 font-mono text-gray-800 focus:ring-2 focus:ring-indigo-100 outline-none resize-none"/>
                       </div>
                       <div className="space-y-1">
-                        <label className="text-[10px] font-bold text-indigo-400">STATUS DOS CLIENTES</label>
-                        <textarea value={city.clients.map(cl => cl.status).join('\n').replace(/\n+$/, '')} onChange={e => handleBulkUpdate(idx, 'status', e.target.value)} className="w-full h-40 p-3 border rounded-lg text-sm bg-gray-50 font-mono text-gray-800 focus:ring-2 focus:ring-indigo-100 outline-none resize-none"/>
+                        <label className="text-[10px] font-bold text-indigo-400">STATUS DOS CLIENTES (ENTER para nova linha)</label>
+                        <textarea value={getTextAreaValue(idx, 'status')} onChange={e => handleBulkUpdate(idx, 'status', e.target.value)} className="w-full h-40 p-3 border rounded-lg text-sm bg-gray-50 font-mono text-gray-800 focus:ring-2 focus:ring-indigo-100 outline-none resize-none"/>
                       </div>
                     </div>
                   </div>
@@ -477,7 +486,7 @@ const App: React.FC = () => {
             </div>
           )}
 
-          {/* Encerramento */}
+          {/* Encerramento com CORES CORRIGIDAS */}
           <div className="pt-10">
             <button onClick={iniciarEncerramento} className="w-full bg-indigo-700 hover:bg-indigo-800 text-white font-black py-5 rounded-xl shadow-xl transition-all uppercase tracking-widest text-lg border-b-4 border-indigo-900">
               <i className="fas fa-flag-checkered mr-2"></i> Iniciar Encerramento
@@ -486,8 +495,7 @@ const App: React.FC = () => {
             {isEncerramentoVisible && (
               <div className="mt-8 space-y-6 animate-in slide-in-from-bottom-8">
                 <div className="flex items-center gap-3 border-b-4 border-indigo-100 pb-2">
-                   <h2 className="text-2xl font-black text-indigo-900 uppercase">Feedback Final</h2>
-                   <div className="bg-indigo-100 text-indigo-700 px-3 py-1 rounded-full text-xs font-bold">Resumo da Viagem</div>
+                   <h2 className="text-2xl font-black text-indigo-900 uppercase">Fechamento Técnico</h2>
                 </div>
                 
                 <div className="space-y-8">
@@ -495,29 +503,36 @@ const App: React.FC = () => {
                     <div key={city.name} className="space-y-4">
                       <h3 className="font-black text-indigo-600 text-xl flex items-center gap-2"><i className="fas fa-map-marker-alt"></i> {city.name.toUpperCase()}</h3>
                       <div className="grid gap-3">
-                        {city.clients.filter(cl => cl.name).map((cl, clIdx) => {
+                        {city.clients.filter(cl => cl.name.trim()).map((cl, clIdx) => {
                           const clientKey = `${city.name}-${clIdx}`;
                           const fbItem = feedback.find(f => f.clientId === clientKey);
                           return (
                             <div key={clientKey} className="bg-white p-5 rounded-xl shadow-sm border-2 border-gray-100 flex flex-col md:flex-row md:items-center justify-between gap-4 transition-all hover:border-indigo-200">
                               <div className="flex flex-col">
-                                <span className="font-black text-gray-800 text-base">{cl.name.toUpperCase()}</span>
-                                <span className="text-gray-400 text-xs font-bold uppercase">{cl.status}</span>
+                                <span className="font-black text-gray-800 text-base">{cl.name.trim().toUpperCase()}</span>
+                                <span className="text-gray-400 text-xs font-bold uppercase">{cl.status.trim()}</span>
                               </div>
                               
                               <div className="flex flex-wrap items-center gap-4">
                                 <div className="flex bg-gray-100 p-1 rounded-lg gap-1">
-                                  {(['REALIZADO', 'NAO_REALIZADO', 'AUSENTE'] as FeedbackStatus[]).map(s => (
-                                    <button 
-                                      key={s} 
-                                      onClick={() => setFeedback(prev => prev.map(f => f.clientId === clientKey ? { ...f, status: s } : f))}
-                                      className={`px-3 py-2 rounded-md text-[10px] font-black transition-all ${fbItem?.status === s ? 
-                                        (s === 'REALIZADO' ? 'bg-green-600 text-white' : s === 'AUSENTE' ? 'bg-amber-500 text-white' : 'bg-red-600 text-white') : 
-                                        'text-gray-400 hover:text-gray-600'}`}
-                                    >
-                                      {s.replace('_', ' ')}
-                                    </button>
-                                  ))}
+                                  {(['REALIZADO', 'NAO_REALIZADO', 'AUSENTE'] as FeedbackStatus[]).map(s => {
+                                    const isActive = fbItem?.status === s;
+                                    let activeStyle = 'text-gray-400 hover:text-gray-600';
+                                    if (isActive) {
+                                      if (s === 'REALIZADO') activeStyle = 'bg-blue-600 text-white shadow-md';
+                                      else if (s === 'NAO_REALIZADO') activeStyle = 'bg-red-600 text-white shadow-md';
+                                      else if (s === 'AUSENTE') activeStyle = 'bg-amber-500 text-white shadow-md';
+                                    }
+                                    return (
+                                      <button 
+                                        key={s} 
+                                        onClick={() => setFeedback(prev => prev.map(f => f.clientId === clientKey ? { ...f, status: s } : f))}
+                                        className={`px-3 py-2 rounded-md text-[10px] font-black transition-all ${activeStyle}`}
+                                      >
+                                        {s.replace('_', ' ')}
+                                      </button>
+                                    );
+                                  })}
                                 </div>
                                 {fbItem?.status === 'REALIZADO' && (
                                   <input type="text" placeholder="Atendente..." value={fbItem.attendantName} onChange={e => setFeedback(prev => prev.map(f => f.clientId === clientKey ? { ...f, attendantName: e.target.value } : f))} className="p-3 border rounded-lg text-sm bg-indigo-50 font-bold focus:ring-2 focus:ring-indigo-300 outline-none w-full md:w-48 text-gray-800"/>
@@ -552,15 +567,14 @@ const App: React.FC = () => {
         /* History Tab */
         <div className="space-y-6 animate-in fade-in duration-300">
           <div className="flex items-center justify-between border-b-2 border-gray-200 pb-2">
-            <h2 className="text-xl font-black text-gray-800 uppercase flex items-center gap-2"><i className="fas fa-history text-blue-600"></i> Histórico de Atividades</h2>
-            <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">{history.length} VIAGENS SALVAS</span>
+            <h2 className="text-xl font-black text-gray-800 uppercase flex items-center gap-2"><i className="fas fa-history text-blue-600"></i> Histórico de Viagens</h2>
+            <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">{history.length} SALVAS</span>
           </div>
 
           {history.length === 0 ? (
             <div className="text-center py-20 bg-white rounded-xl shadow-sm border border-dashed border-gray-300">
               <i className="fas fa-folder-open text-5xl text-gray-200 mb-4"></i>
-              <p className="text-gray-400 font-bold">Nenhuma viagem salva no histórico ainda.</p>
-              <button onClick={() => setActiveTab('form')} className="mt-4 text-blue-600 font-black uppercase text-xs hover:underline">Começar nova programação</button>
+              <p className="text-gray-400 font-bold uppercase text-xs">Nenhuma viagem arquivada.</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-4">
@@ -611,13 +625,13 @@ interface MaterialSelectorProps {
 const MaterialSelector: React.FC<MaterialSelectorProps> = ({ 
   options, value, qty, onModelChange, onQtyChange 
 }) => (
-  <div className="flex items-center gap-2">
+  <div className="flex items-center gap-2 bg-white p-1 rounded-lg border border-gray-100">
     <select 
       value={value} 
       onChange={e => onModelChange(e.target.value)}
-      className="rounded border-none bg-transparent font-bold text-xs text-gray-800 focus:ring-0 cursor-pointer min-w-[120px]"
+      className="rounded border-none bg-transparent font-bold text-[10px] text-gray-700 focus:ring-0 cursor-pointer min-w-[120px]"
     >
-      {options.map(opt => <option key={opt} value={opt}>{opt || "Nenhum"}</option>)}
+      {options.map(opt => <option key={opt} value={opt}>{opt || "Selecione..."}</option>)}
     </select>
     <div className="h-4 w-[1px] bg-gray-200"></div>
     <input 
@@ -629,7 +643,7 @@ const MaterialSelector: React.FC<MaterialSelectorProps> = ({
         const val = e.target.value === '' ? 0 : parseInt(e.target.value);
         onQtyChange(isNaN(val) ? 0 : val);
       }}
-      className="w-10 bg-transparent font-black text-xs text-blue-600 text-center focus:ring-0 placeholder-gray-300"
+      className="w-8 bg-transparent font-black text-[10px] text-blue-600 text-center focus:ring-0 placeholder-gray-300"
     />
   </div>
 );
