@@ -19,6 +19,7 @@ const App: React.FC = () => {
   const [history, setHistory] = useState<SavedTrip[]>([]);
   
   // Buffer local para evitar cursor saltando e perda de espaços/quebras de linha
+  // O segredo para não pular o cursor é manter o valor bruto exatamente como o usuário digitou
   const [localText, setLocalText] = useState<Record<string, string>>({});
 
   const [servicesOpen, setServicesOpen] = useState(false);
@@ -61,7 +62,7 @@ const App: React.FC = () => {
     }));
   };
 
-  // Handler específico para as observações dos materiais (preservando texto)
+  // Handler para as observações dos materiais
   const handleNoteUpdate = (val: string) => {
     setLocalText(prev => ({ ...prev, 'materials-note': val }));
     updateMaterials({ note: val });
@@ -111,37 +112,43 @@ const App: React.FC = () => {
     });
   };
 
-  // Handler para os campos de Clientes (preservando texto e quebras de linha)
+  // Handler robusto para os campos de Clientes (NOMES e STATUS)
   const handleBulkUpdate = (index: number, type: 'name' | 'status', rawValue: string) => {
     const key = `${index}-${type}`;
+    // Atualiza o buffer local IMEDIATAMENTE e SEM TRATAMENTO (mantém espaços e enters)
     setLocalText(prev => ({ ...prev, [key]: rawValue }));
 
     const lines = rawValue.split('\n');
     setState(prev => {
       const newCities = [...prev.cities];
-      const newClients = newCities[index].clients.map((cl, i) => ({
-        ...cl,
-        [type]: lines[i] !== undefined ? lines[i] : "" // Sem .trim() aqui para permitir Enter e espaços
+      // Mapeia as linhas para os 30 slots de clientes mantendo a integridade
+      const newClients = Array.from({ length: 30 }, (_, i) => ({
+        ...newCities[index].clients[i],
+        [type]: lines[i] !== undefined ? lines[i] : "" 
       }));
       newCities[index] = { ...newCities[index], clients: newClients };
       return { ...prev, cities: newCities };
     });
   };
 
-  // Recupera o valor do buffer local ou do estado (como fallback)
+  // Função simplificada que prioriza o buffer para evitar o pulo do cursor
   const getTextAreaValue = (index: number, type: 'name' | 'status') => {
     const key = `${index}-${type}`;
     if (localText[key] !== undefined) return localText[key];
 
-    const lines = state.cities[index].clients.map(c => c[type]);
-    let lastIndex = -1;
+    // Reconstrução apenas para o estado inicial ou após carregar histórico
+    const clients = state.cities[index].clients;
+    const lines = clients.map(c => c[type]);
+    
+    // Remove apenas as linhas vazias excedentes do final para não poluir o textarea
+    let lastFilled = -1;
     for (let i = lines.length - 1; i >= 0; i--) {
       if (lines[i] && lines[i].trim() !== "") {
-        lastIndex = i;
+        lastFilled = i;
         break;
       }
     }
-    return lines.slice(0, lastIndex + 1).join('\n');
+    return lastFilled === -1 ? "" : lines.slice(0, lastFilled + 1).join('\n');
   };
 
   const handleServiceToggle = (service: string) => {
@@ -171,7 +178,7 @@ const App: React.FC = () => {
 
   const carregarViagem = (viagem: SavedTrip) => {
     setState(viagem.state);
-    setLocalText({});
+    setLocalText({}); // Limpa buffers para reconstruir a partir da viagem carregada
     setActiveTab('form');
     setIsEncerramentoVisible(false);
     setOutput("");
@@ -224,6 +231,7 @@ const App: React.FC = () => {
       text += `${idx + 1}ª CIDADE: ${city.name.toUpperCase()}\n`;
       text += `----------------------------------------------------------------------------\n`;
       text += `ATENDIMENTOS AGENDADOS:\n`;
+      // Filtra apenas clientes que tenham nome preenchido
       const filledClients = city.clients.filter(cl => cl.name && cl.name.trim() !== "");
       filledClients.forEach((cl, clIdx) => {
         text += `${clIdx + 1}. ${cl.name.trim().toUpperCase()}${cl.status && cl.status.trim() ? ` - ${cl.status.trim().toUpperCase()}` : ""}\n`;
@@ -380,7 +388,7 @@ const App: React.FC = () => {
             )}
           </section>
 
-          {/* Materiais */}
+          {/* Lista de Materiais */}
           <section className="bg-white p-5 rounded-xl shadow-md border-l-8 border-orange-500 space-y-6">
             <h2 className="font-bold text-gray-800 flex items-center text-lg"><i className="fas fa-box-open mr-3 text-orange-500"></i> LISTA DE MATERIAIS</h2>
             
@@ -442,7 +450,8 @@ const App: React.FC = () => {
               value={localText['materials-note'] !== undefined ? localText['materials-note'] : state.materials.note} 
               onChange={e => handleNoteUpdate(e.target.value)} 
               placeholder="Observações adicionais sobre materiais..." 
-              spellCheck="false"
+              spellCheck={false}
+              style={{ whiteSpace: 'pre-wrap' }}
               className="w-full rounded-lg border-gray-300 bg-gray-50 p-3 text-sm font-medium h-24 outline-none focus:ring-2 focus:ring-orange-100"
             />
           </section>
@@ -469,8 +478,9 @@ const App: React.FC = () => {
                         <textarea 
                           value={getTextAreaValue(idx, 'name')} 
                           onChange={e => handleBulkUpdate(idx, 'name', e.target.value)} 
-                          spellCheck="false"
+                          spellCheck={false}
                           wrap="soft"
+                          style={{ whiteSpace: 'pre-wrap' }}
                           className="w-full h-48 p-3 border rounded-lg text-sm bg-gray-50 font-mono text-gray-800 focus:ring-2 focus:ring-indigo-100 outline-none resize-none"
                         />
                       </div>
@@ -479,8 +489,9 @@ const App: React.FC = () => {
                         <textarea 
                           value={getTextAreaValue(idx, 'status')} 
                           onChange={e => handleBulkUpdate(idx, 'status', e.target.value)} 
-                          spellCheck="false"
+                          spellCheck={false}
                           wrap="soft"
+                          style={{ whiteSpace: 'pre-wrap' }}
                           className="w-full h-48 p-3 border rounded-lg text-sm bg-gray-50 font-mono text-gray-800 focus:ring-2 focus:ring-indigo-100 outline-none resize-none"
                         />
                       </div>
