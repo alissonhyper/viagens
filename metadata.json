@@ -1,0 +1,5 @@
+{
+  "name": "Programação de Viagem",
+  "description": "Uma aplicação web para planejamento e fechamento de viagens técnicas, permitindo gerenciar equipes, materiais, serviços e atendimentos por cidade com persistência local e relatórios formatados.",
+  "requestFramePermissions": []
+}
