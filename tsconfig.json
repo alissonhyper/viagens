@@ -4,6 +4,7 @@
     "experimentalDecorators": true,
     "useDefineForClassFields": false,
     "module": "ESNext",
+    
     "lib": [
       "ES2022",
       "DOM",
@@ -13,17 +14,28 @@
     "types": [
       "node"
     ],
+    
+    // Configurações cruciais para o Vite e módulos
     "moduleResolution": "bundler",
     "isolatedModules": true,
     "moduleDetection": "force",
+    "resolveJsonModule": true, // Adicionado/Verificado: Necessário para importação de JSON e auxilia na resolução de módulos
+    
+    // Configurações do React e aliases
     "allowJs": true,
     "jsx": "react-jsx",
     "paths": {
       "@/*": [
-        "./*"
+        "./src/*" // Corrigi o caminho para apontar para /src/* (assumindo que suas pastas estão em src)
       ]
     },
     "allowImportingTsExtensions": true,
     "noEmit": true
-  }
+  },
+  
+  // Inclui a pasta de código e o arquivo de definição de tipos do Vite
+  "include": [
+    "src", 
+    "src/vite-env.d.ts" // Garante que o VS Code reconheça as variáveis VITE_GEMINI_API_KEY
+  ]
 }
