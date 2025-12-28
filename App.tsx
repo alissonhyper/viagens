@@ -18,7 +18,7 @@ const App: React.FC = () => {
   const [state, setState] = useState<AppState>(INITIAL_STATE);
   const [history, setHistory] = useState<SavedTrip[]>([]);
   
-  // Controle local para inputs de texto permitindo espaços e quebras de linha nativas sem cursor pulando
+  // Buffer local para evitar cursor saltando e perda de espaços/quebras de linha
   const [localText, setLocalText] = useState<Record<string, string>>({});
 
   const [servicesOpen, setServicesOpen] = useState(false);
@@ -59,6 +59,12 @@ const App: React.FC = () => {
       ...prev,
       materials: { ...prev.materials, ...updates }
     }));
+  };
+
+  // Handler específico para as observações dos materiais (preservando texto)
+  const handleNoteUpdate = (val: string) => {
+    setLocalText(prev => ({ ...prev, 'materials-note': val }));
+    updateMaterials({ note: val });
   };
 
   const addMaterialField = (type: 'onus' | 'onts' | 'routers') => {
@@ -105,6 +111,7 @@ const App: React.FC = () => {
     });
   };
 
+  // Handler para os campos de Clientes (preservando texto e quebras de linha)
   const handleBulkUpdate = (index: number, type: 'name' | 'status', rawValue: string) => {
     const key = `${index}-${type}`;
     setLocalText(prev => ({ ...prev, [key]: rawValue }));
@@ -114,21 +121,22 @@ const App: React.FC = () => {
       const newCities = [...prev.cities];
       const newClients = newCities[index].clients.map((cl, i) => ({
         ...cl,
-        [type]: lines[i] !== undefined ? lines[i] : ""
+        [type]: lines[i] !== undefined ? lines[i] : "" // Sem .trim() aqui para permitir Enter e espaços
       }));
       newCities[index] = { ...newCities[index], clients: newClients };
       return { ...prev, cities: newCities };
     });
   };
 
+  // Recupera o valor do buffer local ou do estado (como fallback)
   const getTextAreaValue = (index: number, type: 'name' | 'status') => {
     const key = `${index}-${type}`;
     if (localText[key] !== undefined) return localText[key];
 
     const lines = state.cities[index].clients.map(c => c[type]);
     let lastIndex = -1;
-    for (let i = 29; i >= 0; i--) {
-      if (lines[i] !== "") {
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (lines[i] && lines[i].trim() !== "") {
         lastIndex = i;
         break;
       }
@@ -208,7 +216,7 @@ const App: React.FC = () => {
     if (state.materials.lunch) text += `${state.materials.lunch.toUpperCase()}\n`;
     if (state.materials.key) text += `01 CHAVE DA LOJA\n`;
     if (state.materials.fuelNote) text += `01 NOTA DE ABASTECIMENTO\n`;
-    if (state.materials.note) text += `OBS: ${state.materials.note}\n`;
+    if (state.materials.note && state.materials.note.trim()) text += `OBS: ${state.materials.note.trim()}\n`;
     text += `\n`;
 
     cidadesHabilitadas.forEach((city, idx) => {
@@ -216,9 +224,9 @@ const App: React.FC = () => {
       text += `${idx + 1}ª CIDADE: ${city.name.toUpperCase()}\n`;
       text += `----------------------------------------------------------------------------\n`;
       text += `ATENDIMENTOS AGENDADOS:\n`;
-      const filledClients = city.clients.filter(cl => cl.name.trim());
+      const filledClients = city.clients.filter(cl => cl.name && cl.name.trim() !== "");
       filledClients.forEach((cl, clIdx) => {
-        text += `${clIdx + 1}. ${cl.name.trim().toUpperCase()}${cl.status.trim() ? ` - ${cl.status.trim().toUpperCase()}` : ""}\n`;
+        text += `${clIdx + 1}. ${cl.name.trim().toUpperCase()}${cl.status && cl.status.trim() ? ` - ${cl.status.trim().toUpperCase()}` : ""}\n`;
       });
       text += `\n`;
     });
@@ -230,7 +238,7 @@ const App: React.FC = () => {
     state.cities.forEach(city => {
       if (city.enabled && city.name) {
         city.clients.forEach((cl, clIdx) => {
-          if (cl.name.trim()) {
+          if (cl.name && cl.name.trim() !== "") {
             newFeedback.push({
               clientId: `${city.name}-${clIdx}`,
               status: 'REALIZADO',
@@ -263,11 +271,11 @@ const App: React.FC = () => {
       text += `----------------------------------------------------------------------------\n`;
       text += `ATENDIMENTOS AGENDADOS:\n`;
 
-      const filledClients = city.clients.filter(cl => cl.name.trim());
+      const filledClients = city.clients.filter(cl => cl.name && cl.name.trim() !== "");
       filledClients.forEach((cl, clIdx) => {
         const fb = feedback.find(f => f.clientId === `${city.name}-${clIdx}`);
         const statusReport = fb?.status === 'NAO_REALIZADO' ? 'NAO REALIZADO' : fb?.status;
-        text += `${clIdx + 1}. ${cl.name.trim().toUpperCase()}${cl.status.trim() ? ` - ${cl.status.trim().toUpperCase()}` : ""} (${statusReport})\n`;
+        text += `${clIdx + 1}. ${cl.name.trim().toUpperCase()}${cl.status && cl.status.trim() ? ` - ${cl.status.trim().toUpperCase()}` : ""} (${statusReport})\n`;
         if (fb?.status === 'REALIZADO') {
           text += `*O.S NA MESA DE: ${fb.attendantName || ""}\n`;
         } else {
@@ -310,7 +318,6 @@ const App: React.FC = () => {
         <p className="text-blue-200 text-sm mt-1 font-medium">abertura e fechamento de programações</p>
       </header>
 
-      {/* Tabs */}
       <nav className="flex bg-white p-1 rounded-lg shadow-inner border">
         <button 
           onClick={() => setActiveTab('form')}
@@ -373,7 +380,7 @@ const App: React.FC = () => {
             )}
           </section>
 
-          {/* Lista de Materiais INTEGRAL */}
+          {/* Materiais */}
           <section className="bg-white p-5 rounded-xl shadow-md border-l-8 border-orange-500 space-y-6">
             <h2 className="font-bold text-gray-800 flex items-center text-lg"><i className="fas fa-box-open mr-3 text-orange-500"></i> LISTA DE MATERIAIS</h2>
             
@@ -431,7 +438,13 @@ const App: React.FC = () => {
               </label>
             </div>
             
-            <textarea value={state.materials.note} onChange={e => updateMaterials({ note: e.target.value })} placeholder="Observações adicionais sobre materiais..." className="w-full rounded-lg border-gray-300 bg-gray-50 p-3 text-sm font-medium h-20 outline-none focus:ring-2 focus:ring-orange-100"/>
+            <textarea 
+              value={localText['materials-note'] !== undefined ? localText['materials-note'] : state.materials.note} 
+              onChange={e => handleNoteUpdate(e.target.value)} 
+              placeholder="Observações adicionais sobre materiais..." 
+              spellCheck="false"
+              className="w-full rounded-lg border-gray-300 bg-gray-50 p-3 text-sm font-medium h-24 outline-none focus:ring-2 focus:ring-orange-100"
+            />
           </section>
 
           {/* Cidades e Atendimentos */}
@@ -452,12 +465,24 @@ const App: React.FC = () => {
                     <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest border-b pb-1">Lista de Atendimentos (Cole ou Digite abaixo)</h4>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div className="space-y-1">
-                        <label className="text-[10px] font-bold text-indigo-400">NOMES DOS CLIENTES (ENTER para nova linha)</label>
-                        <textarea value={getTextAreaValue(idx, 'name')} onChange={e => handleBulkUpdate(idx, 'name', e.target.value)} className="w-full h-40 p-3 border rounded-lg text-sm bg-gray-50 font-mono text-gray-800 focus:ring-2 focus:ring-indigo-100 outline-none resize-none"/>
+                        <label className="text-[10px] font-bold text-indigo-400 uppercase">Nomes dos Clientes (Enter para nova linha)</label>
+                        <textarea 
+                          value={getTextAreaValue(idx, 'name')} 
+                          onChange={e => handleBulkUpdate(idx, 'name', e.target.value)} 
+                          spellCheck="false"
+                          wrap="soft"
+                          className="w-full h-48 p-3 border rounded-lg text-sm bg-gray-50 font-mono text-gray-800 focus:ring-2 focus:ring-indigo-100 outline-none resize-none"
+                        />
                       </div>
                       <div className="space-y-1">
-                        <label className="text-[10px] font-bold text-indigo-400">STATUS DOS CLIENTES (ENTER para nova linha)</label>
-                        <textarea value={getTextAreaValue(idx, 'status')} onChange={e => handleBulkUpdate(idx, 'status', e.target.value)} className="w-full h-40 p-3 border rounded-lg text-sm bg-gray-50 font-mono text-gray-800 focus:ring-2 focus:ring-indigo-100 outline-none resize-none"/>
+                        <label className="text-[10px] font-bold text-indigo-400 uppercase">Status dos Clientes (Enter para nova linha)</label>
+                        <textarea 
+                          value={getTextAreaValue(idx, 'status')} 
+                          onChange={e => handleBulkUpdate(idx, 'status', e.target.value)} 
+                          spellCheck="false"
+                          wrap="soft"
+                          className="w-full h-48 p-3 border rounded-lg text-sm bg-gray-50 font-mono text-gray-800 focus:ring-2 focus:ring-indigo-100 outline-none resize-none"
+                        />
                       </div>
                     </div>
                   </div>
@@ -466,7 +491,6 @@ const App: React.FC = () => {
             ))}
           </section>
 
-          {/* Botões de Ação Final */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <button onClick={gerarTexto} className="bg-blue-600 hover:bg-blue-700 text-white font-black py-5 rounded-xl shadow-lg transition-all transform active:scale-95 uppercase tracking-wider text-lg">
               <i className="fas fa-file-invoice mr-2"></i> Gerar Programação
@@ -486,7 +510,6 @@ const App: React.FC = () => {
             </div>
           )}
 
-          {/* Encerramento com CORES CORRIGIDAS */}
           <div className="pt-10">
             <button onClick={iniciarEncerramento} className="w-full bg-indigo-700 hover:bg-indigo-800 text-white font-black py-5 rounded-xl shadow-xl transition-all uppercase tracking-widest text-lg border-b-4 border-indigo-900">
               <i className="fas fa-flag-checkered mr-2"></i> Iniciar Encerramento
@@ -503,7 +526,7 @@ const App: React.FC = () => {
                     <div key={city.name} className="space-y-4">
                       <h3 className="font-black text-indigo-600 text-xl flex items-center gap-2"><i className="fas fa-map-marker-alt"></i> {city.name.toUpperCase()}</h3>
                       <div className="grid gap-3">
-                        {city.clients.filter(cl => cl.name.trim()).map((cl, clIdx) => {
+                        {city.clients.filter(cl => cl.name && cl.name.trim() !== "").map((cl, clIdx) => {
                           const clientKey = `${city.name}-${clIdx}`;
                           const fbItem = feedback.find(f => f.clientId === clientKey);
                           return (
@@ -564,7 +587,6 @@ const App: React.FC = () => {
           </div>
         </div>
       ) : (
-        /* History Tab */
         <div className="space-y-6 animate-in fade-in duration-300">
           <div className="flex items-center justify-between border-b-2 border-gray-200 pb-2">
             <h2 className="text-xl font-black text-gray-800 uppercase flex items-center gap-2"><i className="fas fa-history text-blue-600"></i> Histórico de Viagens</h2>
