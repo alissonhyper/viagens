@@ -18,6 +18,9 @@ const App: React.FC = () => {
   const [state, setState] = useState<AppState>(INITIAL_STATE);
   const [history, setHistory] = useState<SavedTrip[]>([]);
   
+  // Controle local para inputs de texto permitindo espaços e quebras de linha nativas
+  const [localText, setLocalText] = useState<Record<string, string>>({});
+
   const [servicesOpen, setServicesOpen] = useState(false);
   const [cityAccordions, setCityAccordions] = useState<boolean[]>([false, false, false, false]);
   const [output, setOutput] = useState("");
@@ -25,7 +28,7 @@ const App: React.FC = () => {
   const [feedback, setFeedback] = useState<EncerramentoFeedback[]>([]);
   const [isEncerramentoVisible, setIsEncerramentoVisible] = useState(false);
 
-  // Carregar dados iniciais
+  // Carregar do LocalStorage no Início
   useEffect(() => {
     const savedDraft = localStorage.getItem('prog_viagem_draft');
     if (savedDraft) {
@@ -37,12 +40,11 @@ const App: React.FC = () => {
     }
   }, []);
 
-  // Salvar rascunho automaticamente
+  // Persistência Automática
   useEffect(() => {
     localStorage.setItem('prog_viagem_draft', JSON.stringify(state));
   }, [state]);
 
-  // Salvar histórico
   useEffect(() => {
     localStorage.setItem('prog_viagem_history', JSON.stringify(history));
   }, [history]);
@@ -103,16 +105,34 @@ const App: React.FC = () => {
   };
 
   const handleBulkUpdate = (index: number, type: 'name' | 'status', rawValue: string) => {
+    const key = `${index}-${type}`;
+    setLocalText(prev => ({ ...prev, [key]: rawValue }));
+
     const lines = rawValue.split('\n');
     setState(prev => {
       const newCities = [...prev.cities];
       const newClients = newCities[index].clients.map((cl, i) => ({
         ...cl,
-        [type]: lines[i] !== undefined ? lines[i].trim() : ""
+        [type]: lines[i] !== undefined ? lines[i] : ""
       }));
       newCities[index] = { ...newCities[index], clients: newClients };
       return { ...prev, cities: newCities };
     });
+  };
+
+  const getTextAreaValue = (index: number, type: 'name' | 'status') => {
+    const key = `${index}-${type}`;
+    if (localText[key] !== undefined) return localText[key];
+
+    const lines = state.cities[index].clients.map(c => c[type]);
+    let lastIndex = -1;
+    for (let i = 29; i >= 0; i--) {
+      if (lines[i] !== "") {
+        lastIndex = i;
+        break;
+      }
+    }
+    return lines.slice(0, lastIndex + 1).join('\n');
   };
 
   const handleServiceToggle = (service: string) => {
@@ -131,26 +151,27 @@ const App: React.FC = () => {
       state: JSON.parse(JSON.stringify(state))
     };
     setHistory(prev => [novaViagem, ...prev]);
-    alert("Viagem salva no histórico!");
+    alert("Viagem arquivada com sucesso!");
   };
 
   const excluirViagem = (id: string) => {
-    if (confirm("Deseja realmente excluir esta viagem do histórico?")) {
+    if (confirm("Deseja realmente excluir esta viagem?")) {
       setHistory(prev => prev.filter(v => v.id !== id));
     }
   };
 
   const carregarViagem = (viagem: SavedTrip) => {
     setState(viagem.state);
+    setLocalText({});
     setActiveTab('form');
     setIsEncerramentoVisible(false);
     setOutput("");
     setEncerramentoOutput("");
-    alert("Programação carregada!");
   };
 
   const carregarParaEncerramento = (viagem: SavedTrip) => {
     setState(viagem.state);
+    setLocalText({});
     setActiveTab('form');
     iniciarEncerramento();
     window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
@@ -193,9 +214,9 @@ const App: React.FC = () => {
       text += `${idx + 1}ª CIDADE: ${city.name.toUpperCase()}\n`;
       text += `----------------------------------------------------------------------------\n`;
       text += `ATENDIMENTOS AGENDADOS:\n`;
-      const filledClients = city.clients.filter(cl => cl.name);
+      const filledClients = city.clients.filter(cl => cl.name.trim());
       filledClients.forEach((cl, clIdx) => {
-        text += `${clIdx + 1}. ${cl.name.toUpperCase()}${cl.status ? ` - ${cl.status.toUpperCase()}` : ""}\n`;
+        text += `${clIdx + 1}. ${cl.name.trim().toUpperCase()}${cl.status.trim() ? ` - ${cl.status.trim().toUpperCase()}` : ""}\n`;
       });
       text += `\n`;
     });
@@ -207,7 +228,7 @@ const App: React.FC = () => {
     state.cities.forEach(city => {
       if (city.enabled && city.name) {
         city.clients.forEach((cl, clIdx) => {
-          if (cl.name) {
+          if (cl.name.trim()) {
             newFeedback.push({
               clientId: `${city.name}-${clIdx}`,
               status: 'REALIZADO',
@@ -240,12 +261,11 @@ const App: React.FC = () => {
       text += `----------------------------------------------------------------------------\n`;
       text += `ATENDIMENTOS AGENDADOS:\n`;
 
-      const filledClients = city.clients.filter(cl => cl.name);
+      const filledClients = city.clients.filter(cl => cl.name.trim());
       filledClients.forEach((cl, clIdx) => {
         const fb = feedback.find(f => f.clientId === `${city.name}-${clIdx}`);
-        // Remove underscore from NAO_REALIZADO status for the report
-        const statusReport = fb?.status === 'NAO_REALIZADO' ? 'NAO REALIZADO' : fb?.status;
-        text += `${clIdx + 1}. ${cl.name.toUpperCase()}${cl.status ? ` - ${cl.status.toUpperCase()}` : ""} (${statusReport})\n`;
+        const statusDisplay = fb?.status === 'NAO_REALIZADO' ? 'NAO REALIZADO' : fb?.status;
+        text += `${clIdx + 1}. ${cl.name.trim().toUpperCase()}${cl.status.trim() ? ` - ${cl.status.trim().toUpperCase()}` : ""} (${statusDisplay})\n`;
         if (fb?.status === 'REALIZADO') {
           text += `*O.S NA MESA DE: ${fb.attendantName || ""}\n`;
         } else {
@@ -261,114 +281,69 @@ const App: React.FC = () => {
     navigator.clipboard.writeText(text).then(() => alert("Texto copiado!"));
   };
 
-  const imprimirProgramacao = (text: string) => {
-    const printWindow = window.open('', '_blank');
-    if (printWindow) {
-      printWindow.document.write(`
-        <html>
-          <head>
-            <title>Impressão - Programação de Viagem</title>
-            <style>
-              body { 
-                font-family: monospace; 
-                white-space: pre-wrap; 
-                padding: 20px; 
-                font-size: 14px;
-                line-height: 1.4;
-              }
-              @media print {
-                body { padding: 0; }
-              }
-            </style>
-          </head>
-          <body>${text}</body>
-        </html>
-      `);
-      printWindow.document.close();
-      printWindow.focus();
-      printWindow.print();
-      printWindow.close();
-    } else {
-      alert("Por favor, habilite pop-ups para imprimir o conteúdo.");
-    }
-  };
-
   return (
-    <div className="max-w-4xl mx-auto p-4 space-y-6 pb-20 no-print text-gray-900">
+    <div className="max-w-4xl mx-auto p-4 space-y-6 pb-20 no-print text-gray-900 font-sans">
       <header className="text-center py-6 bg-blue-700 text-white rounded-xl shadow-lg border-b-4 border-blue-900">
         <h1 className="text-3xl font-extrabold uppercase tracking-tight">Programação de Viagem</h1>
         <p className="text-blue-200 text-sm mt-1 font-medium">abertura e fechamento de programações</p>
       </header>
 
-      {/* Tabs */}
-      <nav className="flex bg-white p-1 rounded-lg shadow-inner border">
-        <button 
-          onClick={() => setActiveTab('form')}
-          className={`flex-1 py-3 px-4 rounded-md font-bold text-sm uppercase transition-all flex items-center justify-center gap-2 ${activeTab === 'form' ? 'bg-blue-600 text-white shadow' : 'text-gray-500 hover:bg-gray-50'}`}
-        >
-          <i className="fas fa-edit"></i> Nova Programação
+      <nav className="flex bg-white p-1 rounded-lg shadow-inner border border-gray-200">
+        <button onClick={() => setActiveTab('form')} className={`flex-1 py-3 px-4 rounded-md font-bold text-sm uppercase transition-all flex items-center justify-center gap-2 ${activeTab === 'form' ? 'bg-blue-600 text-white shadow' : 'text-gray-500 hover:bg-gray-50'}`}>
+          <i className="fas fa-edit"></i> Programação Atual
         </button>
-        <button 
-          onClick={() => setActiveTab('history')}
-          className={`flex-1 py-3 px-4 rounded-md font-bold text-sm uppercase transition-all flex items-center justify-center gap-2 ${activeTab === 'history' ? 'bg-blue-600 text-white shadow' : 'text-gray-500 hover:bg-gray-50'}`}
-        >
+        <button onClick={() => setActiveTab('history')} className={`flex-1 py-3 px-4 rounded-md font-bold text-sm uppercase transition-all flex items-center justify-center gap-2 ${activeTab === 'history' ? 'bg-blue-600 text-white shadow' : 'text-gray-500 hover:bg-gray-50'}`}>
           <i className="fas fa-history"></i> Histórico ({history.length})
         </button>
       </nav>
 
       {activeTab === 'form' ? (
         <div className="space-y-6 animate-in fade-in duration-300">
-          {/* Dados Gerais */}
+          {/* DADOS DA EQUIPE */}
           <section className="bg-white p-5 rounded-xl shadow-md border-l-8 border-blue-500 space-y-4">
             <h2 className="font-bold text-gray-800 flex items-center text-lg"><i className="fas fa-info-circle mr-3 text-blue-500"></i> DADOS DA EQUIPE</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Data da Viagem</label>
-                <input type="date" value={state.date} onChange={e => updateState('date', e.target.value)} className="block w-full rounded-lg border-gray-300 bg-gray-50 p-3 border font-medium"/>
+                <label className="block text-xs font-bold text-gray-400 uppercase mb-1">Data</label>
+                <input type="date" value={state.date} onChange={e => updateState('date', e.target.value)} className="w-full rounded-lg border-gray-200 p-3 border font-medium bg-gray-50 focus:ring-2 focus:ring-blue-100 outline-none"/>
               </div>
               <div>
-                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Horário de Saída</label>
-                <input type="time" value={state.startTime} onChange={e => updateState('startTime', e.target.value)} className="block w-full rounded-lg border-gray-300 bg-gray-50 p-3 border font-medium"/>
+                <label className="block text-xs font-bold text-gray-400 uppercase mb-1">Horário Saída</label>
+                <input type="time" value={state.startTime} onChange={e => updateState('startTime', e.target.value)} className="w-full rounded-lg border-gray-200 p-3 border font-medium bg-gray-50 focus:ring-2 focus:ring-blue-100 outline-none"/>
               </div>
               <div>
-                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Técnico Responsável</label>
-                <select value={state.technician} onChange={e => updateState('technician', e.target.value)} className="block w-full rounded-lg border-gray-300 bg-gray-50 p-3 border font-medium">
+                <label className="block text-xs font-bold text-gray-400 uppercase mb-1">Técnico</label>
+                <select value={state.technician} onChange={e => updateState('technician', e.target.value)} className="w-full rounded-lg border-gray-200 p-3 border font-medium bg-gray-50 focus:ring-2 focus:ring-blue-100 outline-none">
                   {TECHNICIANS.map(t => <option key={t} value={t}>{t || "Selecione..."}</option>)}
                 </select>
               </div>
               <div>
-                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Auxiliar / Acompanhante</label>
-                <select value={state.assistant} onChange={e => updateState('assistant', e.target.value)} className="block w-full rounded-lg border-gray-300 bg-gray-50 p-3 border font-medium">
+                <label className="block text-xs font-bold text-gray-400 uppercase mb-1">Auxiliar</label>
+                <select value={state.assistant} onChange={e => updateState('assistant', e.target.value)} className="w-full rounded-lg border-gray-200 p-3 border font-medium bg-gray-50 focus:ring-2 focus:ring-blue-100 outline-none">
                   {ASSISTANTS.map(a => <option key={a} value={a}>{a || "Selecione..."}</option>)}
                 </select>
               </div>
             </div>
           </section>
 
-          {/* Serviços */}
-          <section className="bg-white rounded-xl shadow-md overflow-hidden border-l-8 border-emerald-500">
-            <button onClick={() => setServicesOpen(!servicesOpen)} className="w-full text-left p-5 flex justify-between items-center bg-gray-50 hover:bg-gray-100 transition-all">
-              <span className="font-bold text-gray-800 flex items-center text-lg"><i className="fas fa-tools mr-3 text-emerald-500"></i> Serviços agendados ({state.services.length})</span>
-              <i className={`fas fa-chevron-${servicesOpen ? 'up' : 'down'} text-gray-400`}></i>
-            </button>
-            {servicesOpen && (
-              <div className="p-5 grid grid-cols-2 md:grid-cols-4 gap-3 bg-white">
-                {SERVICES_OPTIONS.map(service => (
-                  <label key={service} className={`flex items-center space-x-3 cursor-pointer p-3 rounded-lg border transition-all ${state.services.includes(service) ? 'bg-emerald-50 border-emerald-200' : 'bg-white border-gray-100'}`}>
-                    <input type="checkbox" checked={state.services.includes(service)} onChange={() => handleServiceToggle(service)} className="rounded text-emerald-600 focus:ring-emerald-500 h-5 w-5"/>
-                    <span className="text-sm font-bold text-gray-700">{service}</span>
-                  </label>
-                ))}
-              </div>
-            )}
+          {/* SERVIÇOS AGENDADOS */}
+          <section className="bg-white p-5 rounded-xl shadow-md border-l-8 border-emerald-500 space-y-4">
+            <h2 className="font-bold text-gray-800 flex items-center text-lg"><i className="fas fa-tools mr-3 text-emerald-500"></i> SERVIÇOS AGENDADOS</h2>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+              {SERVICES_OPTIONS.map(s => (
+                <label key={s} className={`p-3 rounded-lg border text-center cursor-pointer transition-all ${state.services.includes(s) ? 'bg-emerald-50 border-emerald-200 text-emerald-700 font-bold' : 'bg-gray-50 border-gray-100 text-gray-400'}`}>
+                  <input type="checkbox" checked={state.services.includes(s)} onChange={() => handleServiceToggle(s)} className="hidden"/>
+                  <span className="text-xs uppercase">{s}</span>
+                </label>
+              ))}
+            </div>
           </section>
 
-          {/* Materiais */}
+          {/* LISTA DE MATERIAIS */}
           <section className="bg-white p-5 rounded-xl shadow-md border-l-8 border-orange-500 space-y-6">
             <h2 className="font-bold text-gray-800 flex items-center text-lg"><i className="fas fa-box-open mr-3 text-orange-500"></i> LISTA DE MATERIAIS</h2>
             
             <div className="space-y-5">
-              {/* Seções Dinâmicas */}
               {([['onus', 'ONU', ONU_MODELS], ['onts', 'ONT', ONT_MODELS], ['routers', 'ROTEADOR', ROUTER_MODELS]] as const).map(([type, label, models]) => (
                 <div key={type} className="bg-gray-50 p-4 rounded-xl border border-gray-100">
                   <div className="flex items-center justify-between mb-3">
@@ -422,34 +397,27 @@ const App: React.FC = () => {
               </label>
             </div>
             
-            <textarea value={state.materials.note} onChange={e => updateMaterials({ note: e.target.value })} placeholder="Observações adicionais..." className="w-full rounded-lg border-gray-200 bg-gray-50 p-3 text-sm font-medium h-20"/>
+            <textarea value={state.materials.note} onChange={e => updateMaterials({ note: e.target.value })} placeholder="Observações adicionais..." className="w-full rounded-lg border-gray-200 bg-gray-50 p-3 text-sm font-medium h-20 outline-none focus:ring-1 focus:ring-orange-200 transition-all"/>
           </section>
 
-          {/* Cidades */}
+          {/* CIDADES E ATENDIMENTOS */}
           <section className="space-y-4">
             {state.cities.map((city, idx) => (
               <div key={idx} className="bg-white rounded-xl shadow-md border-l-8 border-indigo-500 overflow-hidden">
                 <div className="p-4 flex items-center bg-gray-50 gap-4">
-                  <input type="checkbox" checked={city.enabled} onChange={e => updateCity(idx, { enabled: e.target.checked })} className="h-6 w-6 text-indigo-600 rounded-md border-gray-300"/>
-                  <div className="flex-1">
-                    <input type="text" placeholder={`Cidade ${idx + 1}`} value={city.name} onChange={e => updateCity(idx, { name: e.target.value })} disabled={!city.enabled} className={`w-full bg-transparent border-b-2 font-black text-lg focus:outline-none ${city.enabled ? 'border-indigo-200 focus:border-indigo-600 text-gray-800' : 'border-transparent text-gray-300'}`}/>
-                  </div>
-                  <button onClick={() => { const n = [...cityAccordions]; n[idx] = !n[idx]; setCityAccordions(n); }} disabled={!city.enabled} className="p-2 text-gray-400 hover:text-indigo-600 transition-colors">
-                    <i className={`fas fa-chevron-${cityAccordions[idx] ? 'up' : 'down'}`}></i>
-                  </button>
+                  <input type="checkbox" checked={city.enabled} onChange={e => updateCity(idx, { enabled: e.target.checked })} className="h-5 w-5 rounded border-gray-300 text-indigo-600"/>
+                  <input type="text" placeholder={`Cidade ${idx + 1}`} value={city.name} onChange={e => updateCity(idx, { name: e.target.value })} disabled={!city.enabled} className="flex-1 bg-transparent border-b-2 border-indigo-100 font-black text-indigo-900 focus:outline-none focus:border-indigo-600 disabled:opacity-30"/>
+                  <button onClick={() => { const n = [...cityAccordions]; n[idx] = !n[idx]; setCityAccordions(n); }} disabled={!city.enabled} className="text-indigo-300 hover:text-indigo-600 p-2"><i className={`fas fa-chevron-${cityAccordions[idx] ? 'up' : 'down'}`}></i></button>
                 </div>
                 {city.enabled && cityAccordions[idx] && (
-                  <div className="p-5 space-y-4 bg-white animate-in slide-in-from-top-2">
-                    <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest border-b pb-1">Lista de Atendimentos (Cole ou Digite abaixo)</h4>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div className="space-y-1">
-                        <label className="text-[10px] font-bold text-indigo-400">NOMES DOS CLIENTES</label>
-                        <textarea value={city.clients.map(cl => cl.name).join('\n').replace(/\n+$/, '')} onChange={e => handleBulkUpdate(idx, 'name', e.target.value)} className="w-full h-40 p-3 border rounded-lg text-sm bg-gray-50 font-mono text-gray-800 focus:ring-2 focus:ring-indigo-100 outline-none resize-none"/>
-                      </div>
-                      <div className="space-y-1">
-                        <label className="text-[10px] font-bold text-indigo-400">STATUS DOS CLIENTES</label>
-                        <textarea value={city.clients.map(cl => cl.status).join('\n').replace(/\n+$/, '')} onChange={e => handleBulkUpdate(idx, 'status', e.target.value)} className="w-full h-40 p-3 border rounded-lg text-sm bg-gray-50 font-mono text-gray-800 focus:ring-2 focus:ring-indigo-100 outline-none resize-none"/>
-                      </div>
+                  <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4 animate-in slide-in-from-top-2">
+                    <div>
+                      <label className="text-[10px] font-black text-indigo-400 uppercase block mb-1">Nomes (ENTER para nova linha)</label>
+                      <textarea value={getTextAreaValue(idx, 'name')} onChange={e => handleBulkUpdate(idx, 'name', e.target.value)} className="w-full h-40 p-3 border rounded-lg text-sm bg-gray-50 font-mono focus:ring-2 focus:ring-indigo-100 outline-none resize-none"/>
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-black text-indigo-400 uppercase block mb-1">Status (ENTER para nova linha)</label>
+                      <textarea value={getTextAreaValue(idx, 'status')} onChange={e => handleBulkUpdate(idx, 'status', e.target.value)} className="w-full h-40 p-3 border rounded-lg text-sm bg-gray-50 font-mono focus:ring-2 focus:ring-indigo-100 outline-none resize-none"/>
                     </div>
                   </div>
                 )}
@@ -457,91 +425,72 @@ const App: React.FC = () => {
             ))}
           </section>
 
-          {/* Botões de Ação Final */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <button onClick={gerarTexto} className="bg-blue-600 hover:bg-blue-700 text-white font-black py-5 rounded-xl shadow-lg transition-all transform active:scale-95 uppercase tracking-wider text-lg">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <button onClick={gerarTexto} className="bg-blue-600 hover:bg-blue-700 text-white font-black py-4 rounded-xl shadow-lg transition-all active:scale-95 uppercase">
               <i className="fas fa-file-invoice mr-2"></i> Gerar Programação
             </button>
-            <button onClick={salvarViagem} className="bg-amber-500 hover:bg-amber-600 text-white font-black py-5 rounded-xl shadow-lg transition-all transform active:scale-95 uppercase tracking-wider text-lg">
+            <button onClick={salvarViagem} className="bg-amber-500 hover:bg-amber-600 text-white font-black py-4 rounded-xl shadow-lg transition-all active:scale-95 uppercase">
               <i className="fas fa-save mr-2"></i> Salvar na Lista
             </button>
           </div>
 
           {output && (
-            <div className="space-y-3 animate-in slide-in-from-bottom-4">
-              <textarea readOnly value={output} className="w-full h-80 p-5 font-mono text-sm bg-gray-900 text-green-400 rounded-xl shadow-2xl border-4 border-gray-800"/>
-              <div className="flex gap-3">
-                <button onClick={() => copiarTexto(output)} className="flex-1 bg-green-600 hover:bg-green-700 text-white py-3 rounded-lg font-bold uppercase transition-all shadow-md"><i className="fas fa-copy mr-2"></i> Copiar</button>
-                <button onClick={() => imprimirProgramacao(output)} className="flex-1 bg-gray-700 hover:bg-gray-800 text-white py-3 rounded-lg font-bold uppercase transition-all shadow-md"><i className="fas fa-print mr-2"></i> Imprimir</button>
-              </div>
+            <div className="space-y-2 animate-in slide-in-from-bottom-4">
+              <textarea readOnly value={output} className="w-full h-64 p-4 font-mono text-sm bg-gray-900 text-green-400 rounded-xl border-4 border-gray-800 outline-none"/>
+              <button onClick={() => copiarTexto(output)} className="w-full bg-green-600 text-white py-3 rounded-lg font-bold uppercase"><i className="fas fa-copy mr-2"></i> Copiar Texto</button>
             </div>
           )}
 
-          {/* Encerramento */}
-          <div className="pt-10">
-            <button onClick={iniciarEncerramento} className="w-full bg-indigo-700 hover:bg-indigo-800 text-white font-black py-5 rounded-xl shadow-xl transition-all uppercase tracking-widest text-lg border-b-4 border-indigo-900">
-              <i className="fas fa-flag-checkered mr-2"></i> Iniciar Encerramento
+          {/* ENCERRAMENTO */}
+          <div className="pt-10 border-t-4 border-dashed border-gray-200">
+            <button onClick={iniciarEncerramento} className="w-full bg-indigo-700 text-white font-black py-4 rounded-xl shadow-xl uppercase tracking-widest text-lg border-b-4 border-indigo-900 active:translate-y-1 transition-all">
+              <i className="fas fa-flag-checkered mr-2"></i> Iniciar Encerramento da Viagem
             </button>
 
             {isEncerramentoVisible && (
-              <div className="mt-8 space-y-6 animate-in slide-in-from-bottom-8">
-                <div className="flex items-center gap-3 border-b-4 border-indigo-100 pb-2">
-                   <h2 className="text-2xl font-black text-indigo-900 uppercase">Feedback Final</h2>
-                   <div className="bg-indigo-100 text-indigo-700 px-3 py-1 rounded-full text-xs font-bold">Resumo da Viagem</div>
-                </div>
-                
-                <div className="space-y-8">
-                  {state.cities.filter(c => c.enabled && c.name).map((city) => (
-                    <div key={city.name} className="space-y-4">
-                      <h3 className="font-black text-indigo-600 text-xl flex items-center gap-2"><i className="fas fa-map-marker-alt"></i> {city.name.toUpperCase()}</h3>
-                      <div className="grid gap-3">
-                        {city.clients.filter(cl => cl.name).map((cl, clIdx) => {
-                          const clientKey = `${city.name}-${clIdx}`;
-                          const fbItem = feedback.find(f => f.clientId === clientKey);
-                          return (
-                            <div key={clientKey} className="bg-white p-5 rounded-xl shadow-sm border-2 border-gray-100 flex flex-col md:flex-row md:items-center justify-between gap-4 transition-all hover:border-indigo-200">
-                              <div className="flex flex-col">
-                                <span className="font-black text-gray-800 text-base">{cl.name.toUpperCase()}</span>
-                                <span className="text-gray-400 text-xs font-bold uppercase">{cl.status}</span>
-                              </div>
-                              
-                              <div className="flex flex-wrap items-center gap-4">
-                                <div className="flex bg-gray-100 p-1 rounded-lg gap-1">
-                                  {(['REALIZADO', 'NAO_REALIZADO', 'AUSENTE'] as FeedbackStatus[]).map(s => (
-                                    <button 
-                                      key={s} 
-                                      onClick={() => setFeedback(prev => prev.map(f => f.clientId === clientKey ? { ...f, status: s } : f))}
-                                      className={`px-3 py-2 rounded-md text-[10px] font-black transition-all ${fbItem?.status === s ? 
-                                        (s === 'REALIZADO' ? 'bg-green-600 text-white' : s === 'AUSENTE' ? 'bg-amber-500 text-white' : 'bg-red-600 text-white') : 
-                                        'text-gray-400 hover:text-gray-600'}`}
-                                    >
-                                      {s.replace('_', ' ')}
-                                    </button>
-                                  ))}
-                                </div>
-                                {fbItem?.status === 'REALIZADO' && (
-                                  <input type="text" placeholder="Atendente..." value={fbItem.attendantName} onChange={e => setFeedback(prev => prev.map(f => f.clientId === clientKey ? { ...f, attendantName: e.target.value } : f))} className="p-3 border rounded-lg text-sm bg-indigo-50 font-bold focus:ring-2 focus:ring-indigo-300 outline-none w-full md:w-48 text-gray-800"/>
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                <button onClick={gerarEncerramento} className="w-full bg-indigo-900 hover:bg-black text-white font-black py-5 rounded-xl shadow-2xl transition-all uppercase tracking-widest text-xl mb-4">
-                  Finalizar e Gerar Relatório
-                </button>
-
+              <div className="mt-8 space-y-6 animate-in slide-in-from-bottom-10 pb-10">
+                <h2 className="text-2xl font-black text-indigo-900 border-b-2 border-indigo-100 pb-2">FECHAMENTO TÉCNICO</h2>
+                {state.cities.filter(c => c.enabled && c.name).map(city => (
+                  <div key={city.name} className="space-y-4">
+                    <h3 className="font-black text-indigo-500 flex items-center gap-2"><i className="fas fa-map-marker-alt"></i> {city.name.toUpperCase()}</h3>
+                    {city.clients.filter(cl => cl.name.trim()).map((cl, clIdx) => {
+                      const key = `${city.name}-${clIdx}`;
+                      const fb = feedback.find(f => f.clientId === key);
+                      return (
+                        <div key={key} className="bg-white p-4 rounded-xl border-2 border-gray-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                          <div className="flex-1">
+                            <p className="font-black text-gray-800 text-base">{cl.name.trim().toUpperCase()}</p>
+                            <p className="text-gray-400 text-xs font-bold uppercase">{cl.status.trim()}</p>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            {(['REALIZADO', 'NAO_REALIZADO', 'AUSENTE'] as FeedbackStatus[]).map(s => {
+                              const isActive = fb?.status === s;
+                              let activeClass = 'bg-gray-100 text-gray-400';
+                              if (isActive) {
+                                if (s === 'REALIZADO') activeClass = 'bg-blue-600 text-white shadow-md';
+                                else if (s === 'NAO_REALIZADO') activeClass = 'bg-red-600 text-white shadow-md';
+                                else if (s === 'AUSENTE') activeClass = 'bg-amber-500 text-white shadow-md';
+                              }
+                              return (
+                                <button key={s} onClick={() => setFeedback(prev => prev.map(f => f.clientId === key ? { ...f, status: s } : f))} className={`px-3 py-2 rounded-lg text-[10px] font-black uppercase transition-all ${activeClass}`}>
+                                  {s === 'NAO_REALIZADO' ? 'NÃO REALIZADO' : s}
+                                </button>
+                              );
+                            })}
+                            {fb?.status === 'REALIZADO' && (
+                              <input type="text" placeholder="Nome do Atendente..." value={fb.attendantName} onChange={e => setFeedback(prev => prev.map(f => f.clientId === key ? { ...f, attendantName: e.target.value } : f))} className="p-2 border rounded bg-indigo-50 text-xs font-bold w-full md:w-40 outline-none focus:ring-1 focus:ring-indigo-400"/>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ))}
+                <button onClick={gerarEncerramento} className="w-full bg-black text-white py-4 rounded-xl font-black uppercase text-xl shadow-2xl">Finalizar e Gerar Relatório</button>
                 {encerramentoOutput && (
                   <div className="space-y-3 animate-in zoom-in-95">
-                    <textarea readOnly value={encerramentoOutput} className="w-full h-80 p-5 font-mono text-sm bg-gray-800 text-indigo-300 rounded-xl shadow-2xl border-4 border-indigo-900"/>
-                    <div className="flex gap-3">
-                      <button onClick={() => copiarTexto(encerramentoOutput)} className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white py-4 rounded-xl font-black uppercase shadow-lg"><i className="fas fa-copy mr-2"></i> Copiar Fechamento</button>
-                      <button onClick={() => imprimirProgramacao(encerramentoOutput)} className="flex-1 bg-gray-700 hover:bg-gray-800 text-white py-4 rounded-xl font-black uppercase shadow-lg"><i className="fas fa-print mr-2"></i> Imprimir Fechamento</button>
-                    </div>
+                    <textarea readOnly value={encerramentoOutput} className="w-full h-80 p-5 font-mono text-sm bg-gray-800 text-indigo-300 rounded-xl border-4 border-indigo-900 outline-none"/>
+                    <button onClick={() => copiarTexto(encerramentoOutput)} className="w-full bg-indigo-600 text-white py-4 rounded-xl font-black uppercase shadow-lg"><i className="fas fa-copy mr-2"></i> Copiar Relatório Final</button>
                   </div>
                 )}
               </div>
@@ -549,42 +498,28 @@ const App: React.FC = () => {
           </div>
         </div>
       ) : (
-        /* History Tab */
-        <div className="space-y-6 animate-in fade-in duration-300">
-          <div className="flex items-center justify-between border-b-2 border-gray-200 pb-2">
-            <h2 className="text-xl font-black text-gray-800 uppercase flex items-center gap-2"><i className="fas fa-history text-blue-600"></i> Histórico de Atividades</h2>
-            <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">{history.length} VIAGENS SALVAS</span>
+        /* HISTÓRICO */
+        <div className="space-y-4 animate-in fade-in duration-300">
+          <div className="flex items-center justify-between border-b pb-2">
+            <h2 className="text-xl font-black text-gray-800 uppercase flex items-center gap-2"><i className="fas fa-history text-blue-600"></i> Viagens Arquivadas</h2>
+            <span className="bg-gray-200 text-gray-600 px-3 py-1 rounded-full text-[10px] font-black">{history.length} SALVAS</span>
           </div>
-
           {history.length === 0 ? (
-            <div className="text-center py-20 bg-white rounded-xl shadow-sm border border-dashed border-gray-300">
-              <i className="fas fa-folder-open text-5xl text-gray-200 mb-4"></i>
-              <p className="text-gray-400 font-bold">Nenhuma viagem salva no histórico ainda.</p>
-              <button onClick={() => setActiveTab('form')} className="mt-4 text-blue-600 font-black uppercase text-xs hover:underline">Começar nova programação</button>
-            </div>
+            <div className="text-center py-20 text-gray-400 font-bold uppercase text-xs italic">Nenhuma viagem no histórico...</div>
           ) : (
-            <div className="grid grid-cols-1 gap-4">
-              {history.map((viagem) => (
-                <div key={viagem.id} className="bg-white p-5 rounded-xl shadow-md border border-gray-100 flex flex-col md:flex-row md:items-center justify-between gap-6 transition-all hover:shadow-lg hover:border-blue-100 group">
-                  <div className="space-y-1 flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-black text-blue-600 bg-blue-50 px-2 py-0.5 rounded uppercase">{formatarData(viagem.state.date)}</span>
-                      <span className="text-xs font-bold text-gray-400">{viagem.state.startTime}</span>
+            <div className="grid gap-4">
+              {history.map(v => (
+                <div key={v.id} className="bg-white p-5 rounded-xl border border-gray-200 flex flex-col md:flex-row md:items-center justify-between gap-4 hover:shadow-lg transition-all group">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="bg-blue-50 text-blue-600 px-2 py-0.5 rounded text-[10px] font-black uppercase">{formatarData(v.state.date)}</span>
                     </div>
-                    <h3 className="font-black text-gray-800 text-lg group-hover:text-blue-700 transition-colors line-clamp-1">{viagem.title}</h3>
-                    <p className="text-xs text-gray-500 font-medium italic">{viagem.state.services.join(', ') || 'Sem serviços definidos'}</p>
+                    <h3 className="font-black text-gray-800 text-lg group-hover:text-blue-700">{v.title}</h3>
                   </div>
-                  
-                  <div className="flex flex-wrap gap-2">
-                    <button onClick={() => carregarViagem(viagem)} className="bg-blue-50 hover:bg-blue-600 hover:text-white text-blue-600 px-4 py-2 rounded-lg text-xs font-black uppercase transition-all flex items-center gap-2">
-                      <i className="fas fa-edit"></i> Editar
-                    </button>
-                    <button onClick={() => carregarParaEncerramento(viagem)} className="bg-indigo-50 hover:bg-indigo-600 hover:text-white text-indigo-600 px-4 py-2 rounded-lg text-xs font-black uppercase transition-all flex items-center gap-2">
-                      <i className="fas fa-check-circle"></i> Fechar
-                    </button>
-                    <button onClick={() => excluirViagem(viagem.id)} className="bg-red-50 hover:bg-red-600 hover:text-white text-red-600 px-4 py-2 rounded-lg text-xs font-black uppercase transition-all">
-                      <i className="fas fa-trash"></i>
-                    </button>
+                  <div className="flex gap-2">
+                    <button onClick={() => carregarViagem(v)} className="bg-blue-50 text-blue-600 px-4 py-2 rounded-lg font-black text-xs uppercase hover:bg-blue-600 hover:text-white transition-all"><i className="fas fa-edit mr-1"></i> Carregar</button>
+                    <button onClick={() => carregarParaEncerramento(v)} className="bg-indigo-50 text-indigo-600 px-4 py-2 rounded-lg font-black text-xs uppercase hover:bg-indigo-600 hover:text-white transition-all"><i className="fas fa-check-circle mr-1"></i> Encerrar</button>
+                    <button onClick={() => excluirViagem(v.id)} className="text-red-300 hover:text-red-600 p-2 transition-colors"><i className="fas fa-trash"></i></button>
                   </div>
                 </div>
               ))}
@@ -593,7 +528,7 @@ const App: React.FC = () => {
         </div>
       )}
 
-      <footer className="text-center py-10 text-gray-400 text-[10px] font-bold uppercase tracking-widest border-t">
+      <footer className="text-center py-10 text-gray-400 text-[10px] font-bold uppercase tracking-widest border-t border-gray-200">
         &copy; {new Date().getFullYear()} Programação de Viagem &bull; Eficiência Técnica &bull; feito por Alisson Silva
       </footer>
     </div>
@@ -608,29 +543,13 @@ interface MaterialSelectorProps {
   onQtyChange: (val: number) => void;
 }
 
-const MaterialSelector: React.FC<MaterialSelectorProps> = ({ 
-  options, value, qty, onModelChange, onQtyChange 
-}) => (
-  <div className="flex items-center gap-2">
-    <select 
-      value={value} 
-      onChange={e => onModelChange(e.target.value)}
-      className="rounded border-none bg-transparent font-bold text-xs text-gray-800 focus:ring-0 cursor-pointer min-w-[120px]"
-    >
-      {options.map(opt => <option key={opt} value={opt}>{opt || "Nenhum"}</option>)}
+const MaterialSelector: React.FC<MaterialSelectorProps> = ({ options, value, qty, onModelChange, onQtyChange }) => (
+  <div className="flex items-center gap-2 bg-white p-1 rounded-lg border border-gray-100 shadow-sm">
+    <select value={value} onChange={e => onModelChange(e.target.value)} className="bg-transparent text-[10px] font-bold outline-none cursor-pointer text-gray-700">
+      {options.map(o => <option key={o} value={o}>{o || "Selecione..."}</option>)}
     </select>
-    <div className="h-4 w-[1px] bg-gray-200"></div>
-    <input 
-      type="number" 
-      min="0"
-      value={qty === 0 ? '' : qty} 
-      placeholder="0"
-      onChange={e => {
-        const val = e.target.value === '' ? 0 : parseInt(e.target.value);
-        onQtyChange(isNaN(val) ? 0 : val);
-      }}
-      className="w-10 bg-transparent font-black text-xs text-blue-600 text-center focus:ring-0 placeholder-gray-300"
-    />
+    <div className="w-[1px] h-3 bg-gray-200 mx-1"></div>
+    <input type="number" min="0" value={qty === 0 ? "" : qty} placeholder="0" onChange={e => onQtyChange(parseInt(e.target.value) || 0)} className="w-8 text-center bg-gray-50 text-[10px] font-black text-blue-600 outline-none rounded"/>
   </div>
 );
 
