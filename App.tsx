@@ -13,13 +13,15 @@ import {
 import { AppState, EncerramentoFeedback, SavedTrip, FeedbackStatus } from './types';
 import { formatarData, getDiaSemana, listaComE, pad } from './utils';
 
+// Lista de atendentes autorizados para o fechamento
+const ATTENDANTS = ['', 'Alisson', 'Welvister', 'Uriel', 'Pedro', 'João', 'Willians', 'Keven', 'Amile'];
+
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'form' | 'history'>('form');
   const [state, setState] = useState<AppState>(INITIAL_STATE);
   const [history, setHistory] = useState<SavedTrip[]>([]);
   
   // Buffer local para evitar cursor saltando e perda de espaços/quebras de linha
-  // O segredo para não pular o cursor é manter o valor bruto exatamente como o usuário digitou
   const [localText, setLocalText] = useState<Record<string, string>>({});
 
   const [servicesOpen, setServicesOpen] = useState(false);
@@ -62,7 +64,6 @@ const App: React.FC = () => {
     }));
   };
 
-  // Handler para as observações dos materiais
   const handleNoteUpdate = (val: string) => {
     setLocalText(prev => ({ ...prev, 'materials-note': val }));
     updateMaterials({ note: val });
@@ -112,16 +113,13 @@ const App: React.FC = () => {
     });
   };
 
-  // Handler robusto para os campos de Clientes (NOMES e STATUS)
   const handleBulkUpdate = (index: number, type: 'name' | 'status', rawValue: string) => {
     const key = `${index}-${type}`;
-    // Atualiza o buffer local IMEDIATAMENTE e SEM TRATAMENTO (mantém espaços e enters)
     setLocalText(prev => ({ ...prev, [key]: rawValue }));
 
     const lines = rawValue.split('\n');
     setState(prev => {
       const newCities = [...prev.cities];
-      // Mapeia as linhas para os 30 slots de clientes mantendo a integridade
       const newClients = Array.from({ length: 30 }, (_, i) => ({
         ...newCities[index].clients[i],
         [type]: lines[i] !== undefined ? lines[i] : "" 
@@ -131,16 +129,13 @@ const App: React.FC = () => {
     });
   };
 
-  // Função simplificada que prioriza o buffer para evitar o pulo do cursor
   const getTextAreaValue = (index: number, type: 'name' | 'status') => {
     const key = `${index}-${type}`;
     if (localText[key] !== undefined) return localText[key];
 
-    // Reconstrução apenas para o estado inicial ou após carregar histórico
     const clients = state.cities[index].clients;
     const lines = clients.map(c => c[type]);
     
-    // Remove apenas as linhas vazias excedentes do final para não poluir o textarea
     let lastFilled = -1;
     for (let i = lines.length - 1; i >= 0; i--) {
       if (lines[i] && lines[i].trim() !== "") {
@@ -178,7 +173,7 @@ const App: React.FC = () => {
 
   const carregarViagem = (viagem: SavedTrip) => {
     setState(viagem.state);
-    setLocalText({}); // Limpa buffers para reconstruir a partir da viagem carregada
+    setLocalText({});
     setActiveTab('form');
     setIsEncerramentoVisible(false);
     setOutput("");
@@ -231,7 +226,6 @@ const App: React.FC = () => {
       text += `${idx + 1}ª CIDADE: ${city.name.toUpperCase()}\n`;
       text += `----------------------------------------------------------------------------\n`;
       text += `ATENDIMENTOS AGENDADOS:\n`;
-      // Filtra apenas clientes que tenham nome preenchido
       const filledClients = city.clients.filter(cl => cl.name && cl.name.trim() !== "");
       filledClients.forEach((cl, clIdx) => {
         text += `${clIdx + 1}. ${cl.name.trim().toUpperCase()}${cl.status && cl.status.trim() ? ` - ${cl.status.trim().toUpperCase()}` : ""}\n`;
@@ -388,7 +382,7 @@ const App: React.FC = () => {
             )}
           </section>
 
-          {/* Lista de Materiais */}
+          {/* Lista de Materiais com BOTÕES DE INCREMENTO */}
           <section className="bg-white p-5 rounded-xl shadow-md border-l-8 border-orange-500 space-y-6">
             <h2 className="font-bold text-gray-800 flex items-center text-lg"><i className="fas fa-box-open mr-3 text-orange-500"></i> LISTA DE MATERIAIS</h2>
             
@@ -404,7 +398,10 @@ const App: React.FC = () => {
                   <div className="flex flex-wrap gap-3">
                     {state.materials[type].map((item, idx) => (
                       <div key={idx} className="flex items-center gap-2 bg-white p-2 rounded-lg border shadow-sm w-full sm:w-auto">
-                        <MaterialSelector options={models} value={item.model} qty={item.qty} 
+                        <MaterialSelector 
+                          options={models} 
+                          value={item.model} 
+                          qty={item.qty} 
                           onModelChange={(val) => updateNestedMaterial(type, idx, { model: val })}
                           onQtyChange={(val) => updateNestedMaterial(type, idx, { qty: val })}
                         />
@@ -418,16 +415,18 @@ const App: React.FC = () => {
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
               <div className="grid grid-cols-2 gap-3">
-                <div className="bg-gray-50 p-3 rounded-lg border">
-                  <label className="block text-[10px] font-black text-gray-400 uppercase mb-1">CONECTOR APC</label>
-                  <input type="number" min="0" value={state.materials.connectorApc || ''} placeholder="0" onChange={e => updateMaterials({ connectorApc: parseInt(e.target.value) || 0 })} className="w-full bg-transparent font-bold text-gray-800 focus:outline-none"/>
-                </div>
-                <div className="bg-gray-50 p-3 rounded-lg border">
-                  <label className="block text-[10px] font-black text-gray-400 uppercase mb-1">CONECTOR UPC</label>
-                  <input type="number" min="0" value={state.materials.connectorUpc || ''} placeholder="0" onChange={e => updateMaterials({ connectorUpc: parseInt(e.target.value) || 0 })} className="w-full bg-transparent font-bold text-gray-800 focus:outline-none"/>
-                </div>
+                <NumericStepper 
+                  label="CONECTOR APC" 
+                  value={state.materials.connectorApc} 
+                  onChange={v => updateMaterials({ connectorApc: v })}
+                />
+                <NumericStepper 
+                  label="CONECTOR UPC" 
+                  value={state.materials.connectorUpc} 
+                  onChange={v => updateMaterials({ connectorUpc: v })}
+                />
               </div>
-              <div className="bg-gray-50 p-3 rounded-lg border">
+              <div className="bg-gray-50 p-3 rounded-lg border flex flex-col justify-center">
                 <label className="block text-[10px] font-black text-gray-400 uppercase mb-1">ALMOÇO</label>
                 <select value={state.materials.lunch} onChange={e => updateMaterials({ lunch: e.target.value })} className="w-full bg-transparent font-bold text-gray-800 focus:outline-none">
                   {LUNCH_OPTIONS.map(opt => <option key={opt} value={opt}>{opt || "Selecione..."}</option>)}
@@ -456,7 +455,6 @@ const App: React.FC = () => {
             />
           </section>
 
-          {/* Cidades e Atendimentos */}
           <section className="space-y-4">
             {state.cities.map((city, idx) => (
               <div key={idx} className="bg-white rounded-xl shadow-md border-l-8 border-indigo-500 overflow-hidden">
@@ -569,7 +567,16 @@ const App: React.FC = () => {
                                   })}
                                 </div>
                                 {fbItem?.status === 'REALIZADO' && (
-                                  <input type="text" placeholder="Atendente..." value={fbItem.attendantName} onChange={e => setFeedback(prev => prev.map(f => f.clientId === clientKey ? { ...f, attendantName: e.target.value } : f))} className="p-3 border rounded-lg text-sm bg-indigo-50 font-bold focus:ring-2 focus:ring-indigo-300 outline-none w-full md:w-48 text-gray-800"/>
+                                  <select 
+                                    value={fbItem.attendantName} 
+                                    onChange={e => setFeedback(prev => prev.map(f => f.clientId === clientKey ? { ...f, attendantName: e.target.value } : f))}
+                                    className="p-3 border rounded-lg text-sm bg-indigo-50 font-bold focus:ring-2 focus:ring-indigo-300 outline-none w-full md:w-48 text-gray-800"
+                                  >
+                                    <option value="">Atendente...</option>
+                                    {ATTENDANTS.filter(n => n).map(name => (
+                                      <option key={name} value={name}>{name}</option>
+                                    ))}
+                                  </select>
                                 )}
                               </div>
                             </div>
@@ -658,7 +665,7 @@ interface MaterialSelectorProps {
 const MaterialSelector: React.FC<MaterialSelectorProps> = ({ 
   options, value, qty, onModelChange, onQtyChange 
 }) => (
-  <div className="flex items-center gap-2 bg-white p-1 rounded-lg border border-gray-100">
+  <div className="flex items-center gap-2 bg-white p-1 rounded-lg border border-gray-100 shadow-sm">
     <select 
       value={value} 
       onChange={e => onModelChange(e.target.value)}
@@ -667,17 +674,65 @@ const MaterialSelector: React.FC<MaterialSelectorProps> = ({
       {options.map(opt => <option key={opt} value={opt}>{opt || "Selecione..."}</option>)}
     </select>
     <div className="h-4 w-[1px] bg-gray-200"></div>
-    <input 
-      type="number" 
-      min="0"
-      value={qty === 0 ? '' : qty} 
-      placeholder="0"
-      onChange={e => {
-        const val = e.target.value === '' ? 0 : parseInt(e.target.value);
-        onQtyChange(isNaN(val) ? 0 : val);
-      }}
-      className="w-8 bg-transparent font-black text-[10px] text-blue-600 text-center focus:ring-0 placeholder-gray-300"
-    />
+    <div className="flex items-center gap-1">
+      <button 
+        onClick={() => onQtyChange(Math.max(0, qty - 1))}
+        className="w-5 h-5 flex items-center justify-center bg-gray-100 hover:bg-gray-200 text-gray-600 rounded text-[10px] font-bold"
+      >-</button>
+      <input 
+        type="text" 
+        inputMode="numeric"
+        value={qty === 0 ? '' : qty} 
+        placeholder="0"
+        onChange={e => {
+          const valStr = e.target.value.replace(/\D/g, '');
+          const val = valStr === '' ? 0 : parseInt(valStr);
+          onQtyChange(isNaN(val) ? 0 : Math.max(0, val));
+        }}
+        className="w-8 bg-transparent font-black text-[10px] text-blue-600 text-center focus:ring-0 placeholder-gray-300 outline-none"
+      />
+      <button 
+        onClick={() => onQtyChange(qty + 1)}
+        className="w-5 h-5 flex items-center justify-center bg-gray-100 hover:bg-gray-200 text-gray-600 rounded text-[10px] font-bold"
+      >+</button>
+    </div>
+  </div>
+);
+
+interface NumericStepperProps {
+  label: string;
+  value: number;
+  onChange: (val: number) => void;
+}
+
+const NumericStepper: React.FC<NumericStepperProps> = ({ label, value, onChange }) => (
+  <div className="bg-gray-50 p-3 rounded-lg border">
+    <label className="block text-[10px] font-black text-gray-400 uppercase mb-2">{label}</label>
+    <div className="flex items-center justify-between">
+      <button 
+        onClick={() => onChange(Math.max(0, value - 1))}
+        className="w-8 h-8 flex items-center justify-center bg-white border border-gray-200 hover:border-orange-200 text-gray-400 hover:text-orange-500 rounded-lg transition-colors shadow-sm"
+      >
+        <i className="fas fa-minus text-[10px]"></i>
+      </button>
+      <input 
+        type="text" 
+        inputMode="numeric"
+        value={value || ''} 
+        placeholder="0" 
+        onChange={e => {
+          const valStr = e.target.value.replace(/\D/g, '');
+          onChange(parseInt(valStr) || 0);
+        }}
+        className="w-12 bg-transparent font-black text-gray-800 text-center focus:outline-none"
+      />
+      <button 
+        onClick={() => onChange(value + 1)}
+        className="w-8 h-8 flex items-center justify-center bg-white border border-gray-200 hover:border-orange-200 text-gray-400 hover:text-orange-500 rounded-lg transition-colors shadow-sm"
+      >
+        <i className="fas fa-plus text-[10px]"></i>
+      </button>
+    </div>
   </div>
 );
 
