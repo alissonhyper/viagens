@@ -16,6 +16,8 @@ import { formatarData, getDiaSemana, listaComE, pad } from './utils';
 // Lista de atendentes autorizados para o fechamento
 const ATTENDANTS = ['', 'Alisson', 'Welvister', 'Uriel', 'Pedro', 'João', 'Willians', 'Keven', 'Amile'];
 
+const ITEMS_PER_PAGE = 10;
+
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'form' | 'history'>('form');
   const [state, setState] = useState<AppState>(INITIAL_STATE);
@@ -23,6 +25,11 @@ const App: React.FC = () => {
   
   // Estado para controlar se estamos editando uma viagem existente
   const [editingTripId, setEditingTripId] = useState<string | null>(null);
+
+  // Estados para Filtros e Paginação do Histórico
+  const [searchTerm, setSearchTerm] = useState("");
+  const [statusFilter, setStatusFilter] = useState<'all' | 'open' | 'finalized'>('all');
+  const [currentPage, setCurrentPage] = useState(1);
 
   // Buffer local para evitar cursor saltando e perda de espaços/quebras de linha
   const [localText, setLocalText] = useState<Record<string, string>>({});
@@ -55,6 +62,11 @@ const App: React.FC = () => {
   useEffect(() => {
     localStorage.setItem('prog_viagem_history', JSON.stringify(history));
   }, [history]);
+
+  // Resetar página quando mudar filtros
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, statusFilter]);
 
   // --- FUNÇÕES DE ESTADO ---
 
@@ -265,6 +277,49 @@ const App: React.FC = () => {
       ));
     }
   };
+
+  // --- LÓGICA DE FILTRAGEM E PAGINAÇÃO ---
+
+  const getFilteredHistory = () => {
+    return history.filter(viagem => {
+      // 1. Filtro por Status
+      const isFinalized = viagem.feedbacks && viagem.feedbacks.length > 0;
+      if (statusFilter === 'open' && isFinalized) return false;
+      if (statusFilter === 'finalized' && !isFinalized) return false;
+
+      // 2. Filtro de Busca (Search)
+      if (searchTerm.trim()) {
+        const term = searchTerm.toLowerCase();
+        
+        const dataFormatada = formatarData(viagem.state.date).toLowerCase();
+        const tecnico = (viagem.state.technician || "").toLowerCase();
+        const assistente = (viagem.state.assistant || "").toLowerCase();
+        
+        // Verifica cidades
+        const cidades = viagem.state.cities
+          .filter(c => c.enabled && c.name)
+          .map(c => c.name.toLowerCase())
+          .join(" ");
+
+        const match = 
+          dataFormatada.includes(term) ||
+          tecnico.includes(term) ||
+          assistente.includes(term) ||
+          cidades.includes(term);
+
+        if (!match) return false;
+      }
+
+      return true;
+    });
+  };
+
+  const filteredHistory = getFilteredHistory();
+  const totalPages = Math.ceil(filteredHistory.length / ITEMS_PER_PAGE);
+  const currentHistoryPage = filteredHistory.slice(
+    (currentPage - 1) * ITEMS_PER_PAGE, 
+    currentPage * ITEMS_PER_PAGE
+  );
 
   // --- GERAÇÃO DE TEXTO E RELATÓRIOS ---
 
@@ -717,69 +772,120 @@ const App: React.FC = () => {
         </div>
       ) : (
         <div className="space-y-6 animate-in fade-in duration-300">
-          <div className="flex items-center justify-between border-b-2 border-gray-200 pb-2">
-            <h2 className="text-xl font-black text-gray-800 uppercase flex items-center gap-2"><i className="fas fa-history text-blue-600"></i> Histórico de Viagens</h2>
-            <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">{history.length} SALVAS</span>
+          <div className="flex flex-col gap-4 border-b-2 border-gray-200 pb-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-xl font-black text-gray-800 uppercase flex items-center gap-2"><i className="fas fa-history text-blue-600"></i> Histórico de Viagens</h2>
+              <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">{history.length} SALVAS</span>
+            </div>
+            
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="md:col-span-2 relative">
+                 <input 
+                  type="text" 
+                  placeholder="Buscar por nome, cidade ou data..." 
+                  value={searchTerm}
+                  onChange={e => setSearchTerm(e.target.value)}
+                  className="w-full pl-10 pr-4 py-3 rounded-lg border border-gray-300 bg-gray-50 focus:ring-2 focus:ring-blue-100 outline-none text-sm font-bold text-gray-700 uppercase"
+                 />
+                 <i className="fas fa-search absolute left-4 top-3.5 text-gray-400"></i>
+              </div>
+              <div>
+                <select 
+                  value={statusFilter} 
+                  onChange={e => setStatusFilter(e.target.value as 'all' | 'open' | 'finalized')}
+                  className="w-full py-3 px-4 rounded-lg border border-gray-300 bg-gray-50 focus:ring-2 focus:ring-blue-100 outline-none text-sm font-bold text-gray-700 uppercase"
+                >
+                  <option value="all">Todas as Viagens</option>
+                  <option value="open">Abertas (Pendentes)</option>
+                  <option value="finalized">Finalizadas (Fechadas)</option>
+                </select>
+              </div>
+            </div>
           </div>
 
-          {history.length === 0 ? (
+          {filteredHistory.length === 0 ? (
             <div className="text-center py-20 bg-white rounded-xl shadow-sm border border-dashed border-gray-300">
               <i className="fas fa-folder-open text-5xl text-gray-200 mb-4"></i>
-              <p className="text-gray-400 font-bold uppercase text-xs">Nenhuma viagem arquivada.</p>
+              <p className="text-gray-400 font-bold uppercase text-xs">Nenhuma viagem encontrada.</p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 gap-4">
-              {history.map((viagem) => {
-                const isFinalized = viagem.feedbacks && viagem.feedbacks.length > 0;
-                const statusColor = isFinalized ? 'border-green-500' : 'border-amber-500';
-                const isEditing = editingTripId === viagem.id;
-                
-                const teamMembers = [viagem.state.technician, viagem.state.assistant].filter(Boolean);
-                const teamDisplay = listaComE(teamMembers) || "EQUIPE NÃO INFORMADA";
-                const citiesDisplay = viagem.state.cities.filter(c => c.enabled && c.name).map(c => c.name).join(', ') || "Sem Cidade";
-                
-                const displayTitle = `${formatarData(viagem.state.date)} - ${viagem.state.startTime} - ${teamDisplay} (${citiesDisplay})`;
+            <>
+              <div className="grid grid-cols-1 gap-4">
+                {currentHistoryPage.map((viagem) => {
+                  const isFinalized = viagem.feedbacks && viagem.feedbacks.length > 0;
+                  const statusColor = isFinalized ? 'border-green-500' : 'border-amber-500';
+                  const isEditing = editingTripId === viagem.id;
+                  
+                  const teamMembers = [viagem.state.technician, viagem.state.assistant].filter(Boolean);
+                  const teamDisplay = listaComE(teamMembers) || "EQUIPE NÃO INFORMADA";
+                  const citiesDisplay = viagem.state.cities.filter(c => c.enabled && c.name).map(c => c.name).join(', ') || "Sem Cidade";
+                  
+                  const displayTitle = `${formatarData(viagem.state.date)} - ${viagem.state.startTime} - ${teamDisplay} (${citiesDisplay})`;
 
-                return (
-                  <div key={viagem.id} className={`bg-white p-5 rounded-xl shadow-md border border-gray-100 border-l-8 ${statusColor} ${isEditing ? 'ring-2 ring-blue-500 bg-blue-50' : ''} flex flex-col md:flex-row md:items-center justify-between gap-6 transition-all hover:shadow-lg hover:border-blue-100 group`}>
-                    <div className="space-y-1 flex-1">
-                      <div className="flex items-center gap-2 mb-1">
-                        {isFinalized ? (
-                          <span className="text-[10px] font-black text-white bg-green-500 px-2 py-0.5 rounded uppercase tracking-wider">Finalizada</span>
-                        ) : (
-                          <span className="text-[10px] font-black text-white bg-amber-500 px-2 py-0.5 rounded uppercase tracking-wider">Aberta</span>
-                        )}
-                        {isEditing && (
-                           <span className="text-[10px] font-black text-blue-800 bg-blue-200 px-2 py-0.5 rounded uppercase tracking-wider animate-pulse">Editando Agora</span>
-                        )}
+                  return (
+                    <div key={viagem.id} className={`bg-white p-5 rounded-xl shadow-md border border-gray-100 border-l-8 ${statusColor} ${isEditing ? 'ring-2 ring-blue-500 bg-blue-50' : ''} flex flex-col md:flex-row md:items-center justify-between gap-6 transition-all hover:shadow-lg hover:border-blue-100 group`}>
+                      <div className="space-y-1 flex-1">
+                        <div className="flex items-center gap-2 mb-1">
+                          {isFinalized ? (
+                            <span className="text-[10px] font-black text-white bg-green-500 px-2 py-0.5 rounded uppercase tracking-wider">Finalizada</span>
+                          ) : (
+                            <span className="text-[10px] font-black text-white bg-amber-500 px-2 py-0.5 rounded uppercase tracking-wider">Aberta</span>
+                          )}
+                          {isEditing && (
+                             <span className="text-[10px] font-black text-blue-800 bg-blue-200 px-2 py-0.5 rounded uppercase tracking-wider animate-pulse">Editando Agora</span>
+                          )}
+                        </div>
+                        <h3 className="font-black text-gray-800 text-base group-hover:text-blue-700 transition-colors uppercase">{displayTitle}</h3>
+                        <p className="text-xs text-gray-500 font-medium italic">{viagem.state.services.join(', ') || 'Sem serviços definidos'}</p>
                       </div>
-                      <h3 className="font-black text-gray-800 text-base group-hover:text-blue-700 transition-colors uppercase">{displayTitle}</h3>
-                      <p className="text-xs text-gray-500 font-medium italic">{viagem.state.services.join(', ') || 'Sem serviços definidos'}</p>
-                    </div>
-                    
-                    <div className="flex flex-wrap gap-2">
-                      <button onClick={() => carregarViagem(viagem)} className="bg-blue-50 hover:bg-blue-600 hover:text-white text-blue-600 px-4 py-2 rounded-lg text-xs font-black uppercase transition-all flex items-center gap-2">
-                        <i className="fas fa-edit"></i> Editar
-                      </button>
                       
-                      {isFinalized ? (
-                        <button onClick={() => carregarParaEncerramento(viagem)} className="bg-indigo-50 hover:bg-indigo-600 hover:text-white text-indigo-600 px-4 py-2 rounded-lg text-xs font-black uppercase transition-all flex items-center gap-2">
-                          <i className="fas fa-file-alt"></i> Relatório
+                      <div className="flex flex-wrap gap-2">
+                        <button onClick={() => carregarViagem(viagem)} className="bg-blue-50 hover:bg-blue-600 hover:text-white text-blue-600 px-4 py-2 rounded-lg text-xs font-black uppercase transition-all flex items-center gap-2">
+                          <i className="fas fa-edit"></i> Editar
                         </button>
-                      ) : (
-                        <button onClick={() => concluirViagemHistorico(viagem)} className="bg-emerald-50 hover:bg-emerald-600 hover:text-white text-emerald-600 px-4 py-2 rounded-lg text-xs font-black uppercase transition-all flex items-center gap-2">
-                          <i className="fas fa-check-double"></i> Concluir
-                        </button>
-                      )}
+                        
+                        {isFinalized ? (
+                          <button onClick={() => carregarParaEncerramento(viagem)} className="bg-indigo-50 hover:bg-indigo-600 hover:text-white text-indigo-600 px-4 py-2 rounded-lg text-xs font-black uppercase transition-all flex items-center gap-2">
+                            <i className="fas fa-file-alt"></i> Relatório
+                          </button>
+                        ) : (
+                          <button onClick={() => concluirViagemHistorico(viagem)} className="bg-emerald-50 hover:bg-emerald-600 hover:text-white text-emerald-600 px-4 py-2 rounded-lg text-xs font-black uppercase transition-all flex items-center gap-2">
+                            <i className="fas fa-check-double"></i> Concluir
+                          </button>
+                        )}
 
-                      <button onClick={() => excluirViagem(viagem.id)} className="bg-red-50 hover:bg-red-600 hover:text-white text-red-600 px-4 py-2 rounded-lg text-xs font-black uppercase transition-all">
-                        <i className="fas fa-trash"></i>
-                      </button>
+                        <button onClick={() => excluirViagem(viagem.id)} className="bg-red-50 hover:bg-red-600 hover:text-white text-red-600 px-4 py-2 rounded-lg text-xs font-black uppercase transition-all">
+                          <i className="fas fa-trash"></i>
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
+
+              {/* Paginação */}
+              {totalPages > 1 && (
+                <div className="flex justify-between items-center pt-4">
+                  <button 
+                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                    disabled={currentPage === 1}
+                    className={`px-4 py-2 rounded-lg text-xs font-black uppercase flex items-center gap-2 ${currentPage === 1 ? 'bg-gray-100 text-gray-300 cursor-not-allowed' : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'}`}
+                  >
+                    <i className="fas fa-chevron-left"></i> Anterior
+                  </button>
+                  <span className="text-xs font-bold text-gray-500 uppercase">
+                    Página {currentPage} de {totalPages}
+                  </span>
+                  <button 
+                    onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                    disabled={currentPage === totalPages}
+                    className={`px-4 py-2 rounded-lg text-xs font-black uppercase flex items-center gap-2 ${currentPage === totalPages ? 'bg-gray-100 text-gray-300 cursor-not-allowed' : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'}`}
+                  >
+                    Próximo <i className="fas fa-chevron-right"></i>
+                  </button>
+                </div>
+              )}
+            </>
           )}
         </div>
       )}
