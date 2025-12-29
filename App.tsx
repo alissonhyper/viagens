@@ -155,14 +155,23 @@ const App: React.FC = () => {
 
   const salvarViagem = () => {
     const nomesCidades = state.cities.filter(c => c.enabled && c.name).map(c => c.name).join(', ');
+    const teamMembers = [state.technician, state.assistant].filter(Boolean);
+    const teamString = listaComE(teamMembers) || "Equipe";
+
     const novaViagem: SavedTrip = {
       id: crypto.randomUUID(),
-      title: `${formatarData(state.date)} - ${state.technician || 'Equipe'} (${nomesCidades || 'Sem Cidade'})`,
+      title: `${formatarData(state.date)} - ${state.startTime} - ${teamString} (${nomesCidades || 'Sem Cidade'})`,
       timestamp: Date.now(),
-      state: JSON.parse(JSON.stringify(state))
+      state: JSON.parse(JSON.stringify(state)),
+      feedbacks: feedback.length > 0 ? feedback : undefined
     };
-    setHistory(prev => [novaViagem, ...prev]);
-    alert("Viagem salva no histórico!");
+    
+    // Atualiza se já existir (substitui) ou cria novo
+    setHistory(prev => {
+      // Opcional: Se quiser editar uma existente em vez de criar nova sempre, precisaria do ID no state
+      return [novaViagem, ...prev]; 
+    });
+    alert("Viagem salva no histórico com sucesso!");
   };
 
   const excluirViagem = (id: string) => {
@@ -174,8 +183,9 @@ const App: React.FC = () => {
   const carregarViagem = (viagem: SavedTrip) => {
     setState(viagem.state);
     setLocalText({});
+    setFeedback(viagem.feedbacks || []);
     setActiveTab('form');
-    setIsEncerramentoVisible(false);
+    setIsEncerramentoVisible(!!(viagem.feedbacks && viagem.feedbacks.length > 0));
     setOutput("");
     setEncerramentoOutput("");
     alert("Programação carregada!");
@@ -184,9 +194,34 @@ const App: React.FC = () => {
   const carregarParaEncerramento = (viagem: SavedTrip) => {
     setState(viagem.state);
     setLocalText({});
+    setFeedback(viagem.feedbacks || []);
     setActiveTab('form');
-    iniciarEncerramento();
+    iniciarEncerramento(); // Isso vai popular o feedback se estiver vazio, ou manter o carregado
     window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+  };
+
+  // Função para concluir a viagem diretamente no histórico, sem carregar no formulário
+  const concluirViagemHistorico = (viagem: SavedTrip) => {
+    if (confirm("Deseja concluir esta viagem automaticamente? Isso marcará todos os atendimentos como REALIZADOS.")) {
+      const newFeedback: EncerramentoFeedback[] = [];
+      viagem.state.cities.forEach(city => {
+        if (city.enabled && city.name) {
+          city.clients.forEach((cl, clIdx) => {
+            if (cl.name && cl.name.trim() !== "") {
+              newFeedback.push({
+                clientId: `${city.name}-${clIdx}`,
+                status: 'REALIZADO',
+                attendantName: ""
+              });
+            }
+          });
+        }
+      });
+
+      setHistory(prev => prev.map(v => 
+        v.id === viagem.id ? { ...v, feedbacks: newFeedback } : v
+      ));
+    }
   };
 
   const gerarTexto = () => {
@@ -236,6 +271,12 @@ const App: React.FC = () => {
   };
 
   const iniciarEncerramento = () => {
+    // Se já tiver feedback (ex: carregado do histórico), mantém. Caso contrário, gera novo.
+    if (feedback.length > 0) {
+      setIsEncerramentoVisible(true);
+      return;
+    }
+
     const newFeedback: EncerramentoFeedback[] = [];
     state.cities.forEach(city => {
       if (city.enabled && city.name) {
@@ -618,30 +659,52 @@ const App: React.FC = () => {
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-4">
-              {history.map((viagem) => (
-                <div key={viagem.id} className="bg-white p-5 rounded-xl shadow-md border border-gray-100 flex flex-col md:flex-row md:items-center justify-between gap-6 transition-all hover:shadow-lg hover:border-blue-100 group">
-                  <div className="space-y-1 flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-black text-blue-600 bg-blue-50 px-2 py-0.5 rounded uppercase">{formatarData(viagem.state.date)}</span>
-                      <span className="text-xs font-bold text-gray-400">{viagem.state.startTime}</span>
+              {history.map((viagem) => {
+                const isFinalized = viagem.feedbacks && viagem.feedbacks.length > 0;
+                const statusColor = isFinalized ? 'border-green-500' : 'border-amber-500';
+                
+                const teamMembers = [viagem.state.technician, viagem.state.assistant].filter(Boolean);
+                const teamDisplay = listaComE(teamMembers) || "EQUIPE NÃO INFORMADA";
+                const citiesDisplay = viagem.state.cities.filter(c => c.enabled && c.name).map(c => c.name).join(', ') || "Sem Cidade";
+                
+                const displayTitle = `${formatarData(viagem.state.date)} - ${viagem.state.startTime} - ${teamDisplay} (${citiesDisplay})`;
+
+                return (
+                  <div key={viagem.id} className={`bg-white p-5 rounded-xl shadow-md border border-gray-100 border-l-8 ${statusColor} flex flex-col md:flex-row md:items-center justify-between gap-6 transition-all hover:shadow-lg hover:border-blue-100 group`}>
+                    <div className="space-y-1 flex-1">
+                      <div className="flex items-center gap-2 mb-1">
+                        {isFinalized ? (
+                          <span className="text-[10px] font-black text-white bg-green-500 px-2 py-0.5 rounded uppercase tracking-wider">Finalizada</span>
+                        ) : (
+                          <span className="text-[10px] font-black text-white bg-amber-500 px-2 py-0.5 rounded uppercase tracking-wider">Aberta</span>
+                        )}
+                      </div>
+                      <h3 className="font-black text-gray-800 text-base group-hover:text-blue-700 transition-colors uppercase">{displayTitle}</h3>
+                      <p className="text-xs text-gray-500 font-medium italic">{viagem.state.services.join(', ') || 'Sem serviços definidos'}</p>
                     </div>
-                    <h3 className="font-black text-gray-800 text-lg group-hover:text-blue-700 transition-colors line-clamp-1">{viagem.title}</h3>
-                    <p className="text-xs text-gray-500 font-medium italic">{viagem.state.services.join(', ') || 'Sem serviços definidos'}</p>
+                    
+                    <div className="flex flex-wrap gap-2">
+                      <button onClick={() => carregarViagem(viagem)} className="bg-blue-50 hover:bg-blue-600 hover:text-white text-blue-600 px-4 py-2 rounded-lg text-xs font-black uppercase transition-all flex items-center gap-2">
+                        <i className="fas fa-edit"></i> Editar
+                      </button>
+                      
+                      {isFinalized ? (
+                        <button onClick={() => carregarParaEncerramento(viagem)} className="bg-indigo-50 hover:bg-indigo-600 hover:text-white text-indigo-600 px-4 py-2 rounded-lg text-xs font-black uppercase transition-all flex items-center gap-2">
+                          <i className="fas fa-file-alt"></i> Relatório
+                        </button>
+                      ) : (
+                        <button onClick={() => concluirViagemHistorico(viagem)} className="bg-emerald-50 hover:bg-emerald-600 hover:text-white text-emerald-600 px-4 py-2 rounded-lg text-xs font-black uppercase transition-all flex items-center gap-2">
+                          <i className="fas fa-check-double"></i> Concluir
+                        </button>
+                      )}
+
+                      <button onClick={() => excluirViagem(viagem.id)} className="bg-red-50 hover:bg-red-600 hover:text-white text-red-600 px-4 py-2 rounded-lg text-xs font-black uppercase transition-all">
+                        <i className="fas fa-trash"></i>
+                      </button>
+                    </div>
                   </div>
-                  
-                  <div className="flex flex-wrap gap-2">
-                    <button onClick={() => carregarViagem(viagem)} className="bg-blue-50 hover:bg-blue-600 hover:text-white text-blue-600 px-4 py-2 rounded-lg text-xs font-black uppercase transition-all flex items-center gap-2">
-                      <i className="fas fa-edit"></i> Editar
-                    </button>
-                    <button onClick={() => carregarParaEncerramento(viagem)} className="bg-indigo-50 hover:bg-indigo-600 hover:text-white text-indigo-600 px-4 py-2 rounded-lg text-xs font-black uppercase transition-all flex items-center gap-2">
-                      <i className="fas fa-check-circle"></i> Fechar
-                    </button>
-                    <button onClick={() => excluirViagem(viagem.id)} className="bg-red-50 hover:bg-red-600 hover:text-white text-red-600 px-4 py-2 rounded-lg text-xs font-black uppercase transition-all">
-                      <i className="fas fa-trash"></i>
-                    </button>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
