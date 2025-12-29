@@ -21,6 +21,9 @@ const App: React.FC = () => {
   const [state, setState] = useState<AppState>(INITIAL_STATE);
   const [history, setHistory] = useState<SavedTrip[]>([]);
   
+  // Estado para controlar se estamos editando uma viagem existente
+  const [editingTripId, setEditingTripId] = useState<string | null>(null);
+
   // Buffer local para evitar cursor saltando e perda de espaços/quebras de linha
   const [localText, setLocalText] = useState<Record<string, string>>({});
 
@@ -52,6 +55,23 @@ const App: React.FC = () => {
   useEffect(() => {
     localStorage.setItem('prog_viagem_history', JSON.stringify(history));
   }, [history]);
+
+  // --- FUNÇÕES DE ESTADO ---
+
+  const resetForm = () => {
+    if (confirm("Deseja iniciar uma nova programação? Todos os dados não salvos do formulário atual serão perdidos.")) {
+      setState(INITIAL_STATE);
+      setLocalText({});
+      setEditingTripId(null);
+      setOutput("");
+      setEncerramentoOutput("");
+      setFeedback([]);
+      setIsEncerramentoVisible(false);
+      setActiveTab('form');
+      setServicesOpen(false);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  };
 
   const updateState = <K extends keyof AppState>(key: K, value: AppState[K]) => {
     setState(prev => ({ ...prev, [key]: value }));
@@ -153,54 +173,76 @@ const App: React.FC = () => {
     updateState('services', newServices);
   };
 
-  const salvarViagem = () => {
+  // --- LÓGICA DE VIAGEM (SALVAR, CARREGAR, EDITAR) ---
+
+  const salvarViagem = (customFeedback?: EncerramentoFeedback[]) => {
     const nomesCidades = state.cities.filter(c => c.enabled && c.name).map(c => c.name).join(', ');
     const teamMembers = [state.technician, state.assistant].filter(Boolean);
     const teamString = listaComE(teamMembers) || "Equipe";
+    
+    // Usa o feedback passado por parâmetro (para o caso de finalização) ou o estado atual
+    const feedbacksToSave = customFeedback !== undefined ? customFeedback : (feedback.length > 0 ? feedback : undefined);
 
-    const novaViagem: SavedTrip = {
-      id: crypto.randomUUID(),
+    const tripData: SavedTrip = {
+      id: editingTripId || crypto.randomUUID(), // Se editando, mantém ID. Se novo, cria ID.
       title: `${formatarData(state.date)} - ${state.startTime} - ${teamString} (${nomesCidades || 'Sem Cidade'})`,
       timestamp: Date.now(),
       state: JSON.parse(JSON.stringify(state)),
-      feedbacks: feedback.length > 0 ? feedback : undefined
+      feedbacks: feedbacksToSave
     };
     
-    // Atualiza se já existir (substitui) ou cria novo
-    setHistory(prev => {
-      // Opcional: Se quiser editar uma existente em vez de criar nova sempre, precisaria do ID no state
-      return [novaViagem, ...prev]; 
-    });
-    alert("Viagem salva no histórico com sucesso!");
+    if (editingTripId) {
+      // ATUALIZAR EXISTENTE
+      setHistory(prev => prev.map(t => t.id === editingTripId ? tripData : t));
+    } else {
+      // CRIAR NOVA
+      setHistory(prev => [tripData, ...prev]);
+      setEditingTripId(tripData.id); // Entra em modo de edição da nova viagem automaticamente
+    }
+
+    return tripData.id;
+  };
+
+  const handleManualSave = () => {
+    salvarViagem();
+    alert(editingTripId ? "Alterações salvas com sucesso!" : "Nova viagem salva no histórico!");
   };
 
   const excluirViagem = (id: string) => {
     if (confirm("Deseja realmente excluir esta viagem do histórico?")) {
       setHistory(prev => prev.filter(v => v.id !== id));
+      if (editingTripId === id) {
+        resetForm(); // Se excluiu a que estava editando, reseta
+      }
     }
   };
 
   const carregarViagem = (viagem: SavedTrip) => {
+    // Carregar os dados nos inputs
     setState(viagem.state);
     setLocalText({});
     setFeedback(viagem.feedbacks || []);
+    
+    // Configurar modo de edição
+    setEditingTripId(viagem.id);
     setActiveTab('form');
+    
+    // Configurar visualização de encerramento se houver feedback
     setIsEncerramentoVisible(!!(viagem.feedbacks && viagem.feedbacks.length > 0));
+    
+    // Limpar outputs anteriores para evitar confusão
     setOutput("");
     setEncerramentoOutput("");
-    alert("Programação carregada!");
+    
+    alert(`Carregando viagem: ${viagem.title}`);
   };
 
   const carregarParaEncerramento = (viagem: SavedTrip) => {
-    setState(viagem.state);
-    setLocalText({});
-    setFeedback(viagem.feedbacks || []);
-    setActiveTab('form');
-    iniciarEncerramento(); // Isso vai popular o feedback se estiver vazio, ou manter o carregado
+    carregarViagem(viagem);
+    iniciarEncerramento(); 
     window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
   };
 
-  // Função para concluir a viagem diretamente no histórico, sem carregar no formulário
   const concluirViagemHistorico = (viagem: SavedTrip) => {
     if (confirm("Deseja concluir esta viagem automaticamente? Isso marcará todos os atendimentos como REALIZADOS.")) {
       const newFeedback: EncerramentoFeedback[] = [];
@@ -223,6 +265,8 @@ const App: React.FC = () => {
       ));
     }
   };
+
+  // --- GERAÇÃO DE TEXTO E RELATÓRIOS ---
 
   const gerarTexto = () => {
     const diaSemana = getDiaSemana(state.date);
@@ -271,7 +315,6 @@ const App: React.FC = () => {
   };
 
   const iniciarEncerramento = () => {
-    // Se já tiver feedback (ex: carregado do histórico), mantém. Caso contrário, gera novo.
     if (feedback.length > 0) {
       setIsEncerramentoVisible(true);
       return;
@@ -295,7 +338,8 @@ const App: React.FC = () => {
     setIsEncerramentoVisible(true);
   };
 
-  const gerarEncerramento = () => {
+  const finalizarEGerarRelatorio = () => {
+    // 1. Gera o Texto
     const diaSemana = getDiaSemana(state.date);
     const dataFormatada = formatarData(state.date);
     const cidadesHabilitadas = state.cities.filter(c => c.enabled && c.name);
@@ -327,7 +371,21 @@ const App: React.FC = () => {
       });
       text += `\n`;
     });
+    
+    // 2. Salva no Histórico como Finalizada (com feedbacks)
+    salvarViagem(feedback);
+    
+    // 3. Reseta o formulário (Estado Limpo), mas mostra o resultado
+    setState(INITIAL_STATE);
+    setLocalText({});
+    setEditingTripId(null); // Sai do modo de edição
+    setFeedback([]); // Limpa feedbacks locais pois salvamos no histórico
+    
+    // Restaura a visualização apenas do output
     setEncerramentoOutput(text.trim());
+    setIsEncerramentoVisible(true); // Mantém a modal visível para ver o texto
+    
+    alert("Viagem finalizada, salva no histórico e formulário resetado!");
   };
 
   const copiarTexto = (text: string) => {
@@ -356,9 +414,21 @@ const App: React.FC = () => {
 
   return (
     <div className="max-w-4xl mx-auto p-4 space-y-6 pb-20 no-print text-gray-900 font-sans">
-      <header className="text-center py-6 bg-blue-700 text-white rounded-xl shadow-lg border-b-4 border-blue-900">
+      <header 
+        onClick={resetForm}
+        className="text-center py-6 bg-blue-700 text-white rounded-xl shadow-lg border-b-4 border-blue-900 cursor-pointer hover:bg-blue-800 transition-colors group relative"
+        title="Clique para iniciar uma Nova Programação (Limpar tudo)"
+      >
+        <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity bg-white text-blue-800 text-xs font-bold px-2 py-1 rounded">
+          NOVA PROGRAMAÇÃO <i className="fas fa-redo ml-1"></i>
+        </div>
         <h1 className="text-3xl font-extrabold uppercase tracking-tight">Programação de Viagem</h1>
         <p className="text-blue-200 text-sm mt-1 font-medium">abertura e fechamento de programações</p>
+        {editingTripId && (
+          <div className="mt-2 inline-block bg-amber-400 text-blue-900 px-3 py-1 rounded-full text-xs font-black uppercase animate-pulse">
+            <i className="fas fa-edit mr-1"></i> Editando Viagem
+          </div>
+        )}
       </header>
 
       <nav className="flex bg-white p-1 rounded-lg shadow-inner border">
@@ -366,7 +436,7 @@ const App: React.FC = () => {
           onClick={() => setActiveTab('form')}
           className={`flex-1 py-3 px-4 rounded-md font-bold text-sm uppercase transition-all flex items-center justify-center gap-2 ${activeTab === 'form' ? 'bg-blue-600 text-white shadow' : 'text-gray-500 hover:bg-gray-50'}`}
         >
-          <i className="fas fa-edit"></i> Nova Programação
+          <i className="fas fa-edit"></i> {editingTripId ? 'Editando Programação' : 'Nova Programação'}
         </button>
         <button 
           onClick={() => setActiveTab('history')}
@@ -545,8 +615,8 @@ const App: React.FC = () => {
             <button onClick={gerarTexto} className="bg-blue-600 hover:bg-blue-700 text-white font-black py-5 rounded-xl shadow-lg transition-all transform active:scale-95 uppercase tracking-wider text-lg">
               <i className="fas fa-file-invoice mr-2"></i> Gerar Programação
             </button>
-            <button onClick={salvarViagem} className="bg-amber-500 hover:bg-amber-600 text-white font-black py-5 rounded-xl shadow-lg transition-all transform active:scale-95 uppercase tracking-wider text-lg">
-              <i className="fas fa-save mr-2"></i> Salvar na Lista
+            <button onClick={handleManualSave} className="bg-amber-500 hover:bg-amber-600 text-white font-black py-5 rounded-xl shadow-lg transition-all transform active:scale-95 uppercase tracking-wider text-lg">
+              <i className="fas fa-save mr-2"></i> {editingTripId ? 'Atualizar Viagem' : 'Salvar na Lista'}
             </button>
           </div>
 
@@ -628,7 +698,7 @@ const App: React.FC = () => {
                   ))}
                 </div>
 
-                <button onClick={gerarEncerramento} className="w-full bg-indigo-900 hover:bg-black text-white font-black py-5 rounded-xl shadow-2xl transition-all uppercase tracking-widest text-xl mb-4">
+                <button onClick={finalizarEGerarRelatorio} className="w-full bg-indigo-900 hover:bg-black text-white font-black py-5 rounded-xl shadow-2xl transition-all uppercase tracking-widest text-xl mb-4">
                   Finalizar e Gerar Relatório
                 </button>
 
@@ -662,6 +732,7 @@ const App: React.FC = () => {
               {history.map((viagem) => {
                 const isFinalized = viagem.feedbacks && viagem.feedbacks.length > 0;
                 const statusColor = isFinalized ? 'border-green-500' : 'border-amber-500';
+                const isEditing = editingTripId === viagem.id;
                 
                 const teamMembers = [viagem.state.technician, viagem.state.assistant].filter(Boolean);
                 const teamDisplay = listaComE(teamMembers) || "EQUIPE NÃO INFORMADA";
@@ -670,13 +741,16 @@ const App: React.FC = () => {
                 const displayTitle = `${formatarData(viagem.state.date)} - ${viagem.state.startTime} - ${teamDisplay} (${citiesDisplay})`;
 
                 return (
-                  <div key={viagem.id} className={`bg-white p-5 rounded-xl shadow-md border border-gray-100 border-l-8 ${statusColor} flex flex-col md:flex-row md:items-center justify-between gap-6 transition-all hover:shadow-lg hover:border-blue-100 group`}>
+                  <div key={viagem.id} className={`bg-white p-5 rounded-xl shadow-md border border-gray-100 border-l-8 ${statusColor} ${isEditing ? 'ring-2 ring-blue-500 bg-blue-50' : ''} flex flex-col md:flex-row md:items-center justify-between gap-6 transition-all hover:shadow-lg hover:border-blue-100 group`}>
                     <div className="space-y-1 flex-1">
                       <div className="flex items-center gap-2 mb-1">
                         {isFinalized ? (
                           <span className="text-[10px] font-black text-white bg-green-500 px-2 py-0.5 rounded uppercase tracking-wider">Finalizada</span>
                         ) : (
                           <span className="text-[10px] font-black text-white bg-amber-500 px-2 py-0.5 rounded uppercase tracking-wider">Aberta</span>
+                        )}
+                        {isEditing && (
+                           <span className="text-[10px] font-black text-blue-800 bg-blue-200 px-2 py-0.5 rounded uppercase tracking-wider animate-pulse">Editando Agora</span>
                         )}
                       </div>
                       <h3 className="font-black text-gray-800 text-base group-hover:text-blue-700 transition-colors uppercase">{displayTitle}</h3>
