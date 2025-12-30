@@ -33,6 +33,11 @@ const App: React.FC = () => {
     cleanState.date = `${year}-${month}-${day}`;
     cleanState.startTime = "07:00";
     
+    // Garante que a primeira cidade comece habilitada para melhor UX
+    if (cleanState.cities.length > 0) {
+      cleanState.cities[0].enabled = true;
+    }
+    
     return cleanState;
   };
 
@@ -55,7 +60,7 @@ const App: React.FC = () => {
   const [localText, setLocalText] = useState<Record<string, string>>({});
 
   const [servicesOpen, setServicesOpen] = useState(false);
-  const [cityAccordions, setCityAccordions] = useState<boolean[]>([false, false, false, false]);
+  const [cityAccordions, setCityAccordions] = useState<boolean[]>([true, false, false, false]); // Start with first open
   const [output, setOutput] = useState("");
   const [encerramentoOutput, setEncerramentoOutput] = useState("");
   const [feedback, setFeedback] = useState<EncerramentoFeedback[]>([]);
@@ -122,6 +127,7 @@ const App: React.FC = () => {
       setIsEncerramentoVisible(false);
       setActiveTab('form');
       setServicesOpen(false);
+      setCityAccordions([true, false, false, false]); // Reset accordions
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
   };
@@ -184,6 +190,29 @@ const App: React.FC = () => {
       newCities[index] = { ...newCities[index], ...updates };
       return { ...prev, cities: newCities };
     });
+  };
+
+  // Função para remover/desativar uma cidade
+  const removeCity = (index: number) => {
+    if (confirm(`Deseja remover a Cidade ${index + 1}? Os dados serão limpos.`)) {
+      setState(prev => {
+        const newCities = [...prev.cities];
+        // Resetar os dados da cidade
+        newCities[index] = {
+          enabled: false,
+          name: "",
+          clients: Array.from({ length: 30 }, () => ({ name: "", status: "" }))
+        };
+        return { ...prev, cities: newCities };
+      });
+      // Limpar buffer de texto local também
+      setLocalText(prev => {
+        const next = { ...prev };
+        delete next[`${index}-name`];
+        delete next[`${index}-status`];
+        return next;
+      });
+    }
   };
 
   const handleBulkUpdate = (index: number, type: 'name' | 'status', rawValue: string) => {
@@ -518,6 +547,9 @@ const App: React.FC = () => {
     }
   };
 
+  // Encontra o índice da próxima cidade desabilitada
+  const nextCityIndex = state.cities.findIndex(c => !c.enabled);
+
   return (
     <div className={`w-full min-h-screen pb-20 no-print font-sans transition-colors duration-300 ${themeBg}`}>
       <div className="max-w-4xl mx-auto p-4 space-y-6">
@@ -695,48 +727,77 @@ const App: React.FC = () => {
 
             {/* Cidades - AZUL */}
             <section className="space-y-4">
-              {state.cities.map((city, idx) => (
-                <div key={idx} className={`rounded-xl shadow-md border-l-4 border-blue-500 overflow-hidden ${themeCard}`}>
-                  <div className={`p-4 flex items-center gap-4 ${themeSubCard}`}>
-                    <input type="checkbox" checked={city.enabled} onChange={e => updateCity(idx, { enabled: e.target.checked })} className="h-6 w-6 text-indigo-600 rounded-md border-gray-300"/>
-                    <div className="flex-1">
-                      <input type="text" placeholder={`Cidade ${idx + 1}`} value={city.name} onChange={e => updateCity(idx, { name: e.target.value })} disabled={!city.enabled} className={`w-full bg-transparent border-b-2 font-black text-lg focus:outline-none ${city.enabled ? `border-indigo-200 focus:border-indigo-600 ${isDarkMode ? 'text-white' : 'text-gray-800'}` : 'border-transparent text-gray-300'}`}/>
+              {state.cities.map((city, idx) => {
+                // Renderização Condicional: Só mostra se estiver habilitada
+                if (!city.enabled) return null;
+
+                return (
+                  <div key={idx} className={`rounded-xl shadow-md border-l-4 border-blue-500 overflow-hidden ${themeCard}`}>
+                    <div className={`p-4 flex items-center gap-4 ${themeSubCard}`}>
+                      {/* Substituído Checkbox por nada ou indicador fixo para cidade 1 */}
+                      <div className="flex-1">
+                        <input type="text" placeholder={`Cidade ${idx + 1}`} value={city.name} onChange={e => updateCity(idx, { name: e.target.value })} className={`w-full bg-transparent border-b-2 font-black text-lg focus:outline-none border-indigo-200 focus:border-indigo-600 ${isDarkMode ? 'text-white' : 'text-gray-800'}`}/>
+                      </div>
+                      
+                      <button onClick={() => { const n = [...cityAccordions]; n[idx] = !n[idx]; setCityAccordions(n); }} className="p-2 text-gray-400 hover:text-indigo-600 transition-colors">
+                        <i className={`fas fa-chevron-${cityAccordions[idx] ? 'up' : 'down'}`}></i>
+                      </button>
+
+                      {/* Botão de Excluir Cidade (Exceto a primeira) */}
+                      {idx > 0 && (
+                        <button onClick={() => removeCity(idx)} className="p-2 text-red-400 hover:text-red-600 transition-colors" title="Remover Cidade">
+                          <i className="fas fa-trash"></i>
+                        </button>
+                      )}
                     </div>
-                    <button onClick={() => { const n = [...cityAccordions]; n[idx] = !n[idx]; setCityAccordions(n); }} disabled={!city.enabled} className="p-2 text-gray-400 hover:text-indigo-600 transition-colors">
-                      <i className={`fas fa-chevron-${cityAccordions[idx] ? 'up' : 'down'}`}></i>
-                    </button>
-                  </div>
-                  {city.enabled && cityAccordions[idx] && (
-                    <div className={`p-5 space-y-4 animate-in slide-in-from-top-2 ${isDarkMode ? 'bg-[#2D3748]' : 'bg-white'}`}>
-                      <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest border-b pb-1">Lista de Atendimentos (Cole ou Digite abaixo)</h4>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div className="space-y-1">
-                          <label className="text-[10px] font-bold text-indigo-400 uppercase">Nomes dos Clientes (Enter para nova linha)</label>
-                          <textarea 
-                            value={getTextAreaValue(idx, 'name')} 
-                            onChange={e => handleBulkUpdate(idx, 'name', e.target.value)} 
-                            spellCheck={false}
-                            wrap="soft"
-                            style={{ whiteSpace: 'pre-wrap' }}
-                            className={`w-full h-48 p-3 border rounded-lg text-sm font-mono focus:ring-2 focus:ring-indigo-100 outline-none resize-none ${themeInput}`}
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-[10px] font-bold text-indigo-400 uppercase">Status dos Clientes (Enter para nova linha)</label>
-                          <textarea 
-                            value={getTextAreaValue(idx, 'status')} 
-                            onChange={e => handleBulkUpdate(idx, 'status', e.target.value)} 
-                            spellCheck={false}
-                            wrap="soft"
-                            style={{ whiteSpace: 'pre-wrap' }}
-                            className={`w-full h-48 p-3 border rounded-lg text-sm font-mono focus:ring-2 focus:ring-indigo-100 outline-none resize-none ${themeInput}`}
-                          />
+                    {cityAccordions[idx] && (
+                      <div className={`p-5 space-y-4 animate-in slide-in-from-top-2 ${isDarkMode ? 'bg-[#2D3748]' : 'bg-white'}`}>
+                        <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest border-b pb-1">Lista de Atendimentos (Cole ou Digite abaixo)</h4>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div className="space-y-1">
+                            <label className="text-[10px] font-bold text-indigo-400 uppercase">Nomes dos Clientes (Enter para nova linha)</label>
+                            <textarea 
+                              value={getTextAreaValue(idx, 'name')} 
+                              onChange={e => handleBulkUpdate(idx, 'name', e.target.value)} 
+                              spellCheck={false}
+                              wrap="soft"
+                              style={{ whiteSpace: 'pre-wrap' }}
+                              className={`w-full h-48 p-3 border rounded-lg text-sm font-mono focus:ring-2 focus:ring-indigo-100 outline-none resize-none ${themeInput}`}
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[10px] font-bold text-indigo-400 uppercase">Status dos Clientes (Enter para nova linha)</label>
+                            <textarea 
+                              value={getTextAreaValue(idx, 'status')} 
+                              onChange={e => handleBulkUpdate(idx, 'status', e.target.value)} 
+                              spellCheck={false}
+                              wrap="soft"
+                              style={{ whiteSpace: 'pre-wrap' }}
+                              className={`w-full h-48 p-3 border rounded-lg text-sm font-mono focus:ring-2 focus:ring-indigo-100 outline-none resize-none ${themeInput}`}
+                            />
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  )}
-                </div>
-              ))}
+                    )}
+                  </div>
+                );
+              })}
+
+              {/* Botão Adicionar Próxima Cidade */}
+              {nextCityIndex !== -1 && (
+                <button 
+                  onClick={() => {
+                    updateCity(nextCityIndex, { enabled: true });
+                    // Opcional: Abrir o accordion da nova cidade automaticamente
+                    const n = [...cityAccordions];
+                    n[nextCityIndex] = true;
+                    setCityAccordions(n);
+                  }}
+                  className={`w-full py-4 border-2 border-dashed rounded-xl font-bold uppercase transition-all flex items-center justify-center gap-2 ${isDarkMode ? 'border-gray-600 text-gray-400 hover:border-blue-500 hover:text-blue-400 hover:bg-[#2D3748]' : 'border-gray-300 text-gray-500 hover:border-blue-500 hover:text-blue-600 hover:bg-blue-50'}`}
+                >
+                  <i className="fas fa-plus-circle"></i> Adicionar Cidade {nextCityIndex + 1}
+                </button>
+              )}
             </section>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
