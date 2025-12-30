@@ -84,7 +84,8 @@ const App: React.FC = () => {
 
   // --- CLASSES DE ESTILO DINÂMICAS ---
   const themeBg = isDarkMode ? 'bg-[#1A202C] text-gray-100' : 'bg-gray-100 text-gray-900';
-  const themeCard = isDarkMode ? 'bg-[#2D3748] border-gray-600 text-gray-100' : 'bg-white border-gray-100 text-gray-900';
+  // Removi bordas do themeCard para não conflitar com as bordas coloridas laterais
+  const themeCard = isDarkMode ? 'bg-[#2D3748] text-gray-100 shadow-lg' : 'bg-white text-gray-900 shadow-md';
   const themeInput = isDarkMode 
     ? 'bg-[#4A5568] border-gray-600 text-white focus:ring-blue-400 placeholder-gray-400' 
     : 'bg-gray-50 border-gray-300 text-gray-800 focus:ring-blue-100';
@@ -498,15 +499,6 @@ const App: React.FC = () => {
           className="text-center py-6 bg-blue-700 text-white rounded-xl shadow-lg border-b-4 border-blue-900 cursor-pointer hover:bg-blue-800 transition-colors group relative"
           title="Clique para iniciar uma Nova Programação (Limpar tudo)"
         >
-          {/* Botão de Toggle do Tema */}
-          <button 
-            onClick={(e) => { e.stopPropagation(); setIsDarkMode(!isDarkMode); }}
-            className="absolute top-4 left-4 p-2 rounded-full hover:bg-blue-600 transition-colors text-white"
-            title={isDarkMode ? "Mudar para Modo Claro" : "Mudar para Modo Escuro"}
-          >
-            <i className={`fas ${isDarkMode ? 'fa-sun text-yellow-300' : 'fa-moon text-blue-200'} text-xl`}></i>
-          </button>
-
           <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity bg-white text-blue-800 text-xs font-bold px-2 py-1 rounded">
             NOVA PROGRAMAÇÃO <i className="fas fa-redo ml-1"></i>
           </div>
@@ -536,8 +528,8 @@ const App: React.FC = () => {
 
         {activeTab === 'form' ? (
           <div className="space-y-6 animate-in fade-in duration-300">
-            {/* Dados Gerais */}
-            <section className={`p-5 rounded-xl shadow-md border-l-8 border-blue-500 space-y-4 ${themeCard}`}>
+            {/* Dados Gerais - AZUL */}
+            <section className={`p-5 rounded-xl shadow-md border-l-4 border-blue-600 space-y-4 ${themeCard}`}>
               <h2 className={`font-bold flex items-center text-lg ${isDarkMode ? 'text-white' : 'text-gray-800'}`}><i className="fas fa-info-circle mr-3 text-blue-500"></i> DADOS DA EQUIPE</h2>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
@@ -563,8 +555,8 @@ const App: React.FC = () => {
               </div>
             </section>
 
-            {/* Serviços */}
-            <section className={`rounded-xl shadow-md overflow-hidden border-l-8 border-emerald-500 ${isDarkMode ? 'bg-[#2D3748]' : 'bg-white'}`}>
+            {/* Serviços - VERDE (EMERALD) */}
+            <section className={`rounded-xl shadow-md overflow-hidden border-l-4 border-emerald-500 ${isDarkMode ? 'bg-[#2D3748]' : 'bg-white'}`}>
               <button onClick={() => setServicesOpen(!servicesOpen)} className={`w-full text-left p-5 flex justify-between items-center transition-all ${isDarkMode ? 'hover:bg-[#4A5568]' : 'bg-gray-50 hover:bg-gray-100'}`}>
                 <span className={`font-bold flex items-center text-lg ${isDarkMode ? 'text-white' : 'text-gray-800'}`}><i className="fas fa-tools mr-3 text-emerald-500"></i> Serviços agendados ({state.services.length})</span>
                 <i className={`fas fa-chevron-${servicesOpen ? 'up' : 'down'} text-gray-400`}></i>
@@ -573,7 +565,6 @@ const App: React.FC = () => {
                 <div className={`p-5 grid grid-cols-2 md:grid-cols-4 gap-3 ${isDarkMode ? 'bg-[#2D3748]' : 'bg-white'}`}>
                   {SERVICES_OPTIONS.map(service => {
                     const isSelected = state.services.includes(service);
-                    // Lógica corrigida para contraste
                     let containerClass = "flex items-center space-x-3 cursor-pointer p-3 rounded-lg border transition-all ";
                     if (isSelected) {
                         containerClass += isDarkMode ? "bg-emerald-800 border-emerald-600" : "bg-emerald-50 border-emerald-200";
@@ -599,8 +590,8 @@ const App: React.FC = () => {
               )}
             </section>
 
-            {/* Lista de Materiais com BOTÕES DE INCREMENTO */}
-            <section className={`p-5 rounded-xl shadow-md border-l-8 border-orange-500 space-y-6 ${themeCard}`}>
+            {/* Lista de Materiais - LARANJA */}
+            <section className={`p-5 rounded-xl shadow-md border-l-4 border-orange-500 space-y-6 ${themeCard}`}>
               <h2 className={`font-bold flex items-center text-lg ${isDarkMode ? 'text-white' : 'text-gray-800'}`}><i className="fas fa-box-open mr-3 text-orange-500"></i> LISTA DE MATERIAIS</h2>
               
               <div className="space-y-5">
@@ -675,9 +666,10 @@ const App: React.FC = () => {
               />
             </section>
 
+            {/* Cidades - AZUL */}
             <section className="space-y-4">
               {state.cities.map((city, idx) => (
-                <div key={idx} className={`rounded-xl shadow-md border-l-8 border-indigo-500 overflow-hidden ${themeCard}`}>
+                <div key={idx} className={`rounded-xl shadow-md border-l-4 border-blue-500 overflow-hidden ${themeCard}`}>
                   <div className={`p-4 flex items-center gap-4 ${themeSubCard}`}>
                     <input type="checkbox" checked={city.enabled} onChange={e => updateCity(idx, { enabled: e.target.checked })} className="h-6 w-6 text-indigo-600 rounded-md border-gray-300"/>
                     <div className="flex-1">
@@ -948,6 +940,15 @@ const App: React.FC = () => {
           &copy; {new Date().getFullYear()} Programação de Viagem &bull; Eficiência Técnica &bull; feito por Alisson Silva
         </footer>
       </div>
+      
+      {/* Botão Flutuante de Dark Mode */}
+      <button 
+        onClick={() => setIsDarkMode(!isDarkMode)}
+        className="fixed bottom-6 right-6 z-50 p-4 rounded-full shadow-xl bg-blue-600 text-white hover:bg-blue-700 transition-all border-4 border-blue-800 flex items-center justify-center"
+        title={isDarkMode ? "Mudar para Modo Claro" : "Mudar para Modo Escuro"}
+      >
+        <i className={`fas ${isDarkMode ? 'fa-sun text-yellow-300' : 'fa-moon text-blue-100'} text-xl`}></i>
+      </button>
     </div>
   );
 };
