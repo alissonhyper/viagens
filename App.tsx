@@ -19,8 +19,25 @@ const ATTENDANTS = ['', 'Alisson', 'Welvister', 'Uriel', 'Pedro', 'João', 'Will
 const ITEMS_PER_PAGE = 10;
 
 const App: React.FC = () => {
+  // --- FUNÇÃO AUXILIAR DE ESTADO INICIAL ---
+  // Garante que ao resetar ou iniciar, pegamos a data de hoje e hora 07:00
+  const getFreshState = (): AppState => {
+    // Deep clone para evitar mutação da referência constante
+    const cleanState = JSON.parse(JSON.stringify(INITIAL_STATE));
+    
+    const today = new Date();
+    const year = today.getFullYear();
+    const month = String(today.getMonth() + 1).padStart(2, '0');
+    const day = String(today.getDate()).padStart(2, '0');
+    
+    cleanState.date = `${year}-${month}-${day}`;
+    cleanState.startTime = "07:00";
+    
+    return cleanState;
+  };
+
   const [activeTab, setActiveTab] = useState<'form' | 'history'>('form');
-  const [state, setState] = useState<AppState>(INITIAL_STATE);
+  const [state, setState] = useState<AppState>(getFreshState());
   const [history, setHistory] = useState<SavedTrip[]>([]);
   
   // Estado para controlar se estamos editando uma viagem existente
@@ -96,7 +113,7 @@ const App: React.FC = () => {
 
   const resetForm = () => {
     if (confirm("Deseja iniciar uma nova programação? Todos os dados não salvos do formulário atual serão perdidos.")) {
-      setState(INITIAL_STATE);
+      setState(getFreshState()); // Usa a função auxiliar para garantir data de hoje e hora 07:00
       setLocalText({});
       setEditingTripId(null);
       setOutput("");
@@ -433,11 +450,21 @@ const App: React.FC = () => {
 
     cidadesHabilitadas.forEach((city) => {
       text += `----------------------------------------------------------------------------\n`;
-      text += `CIDADE: ${city.name.toUpperCase()}\n`;
+      
+      // Contagem de Realizados
+      const filledClients = city.clients.filter(cl => cl.name && cl.name.trim() !== "");
+      const total = filledClients.length;
+      let realizados = 0;
+      
+      filledClients.forEach((cl, clIdx) => {
+        const fb = feedback.find(f => f.clientId === `${city.name}-${clIdx}`);
+        if (fb?.status === 'REALIZADO') realizados++;
+      });
+
+      text += `CIDADE: ${city.name.toUpperCase()} | REALIZADOS ${realizados}/${total}\n`;
       text += `----------------------------------------------------------------------------\n`;
       text += `ATENDIMENTOS AGENDADOS:\n`;
 
-      const filledClients = city.clients.filter(cl => cl.name && cl.name.trim() !== "");
       filledClients.forEach((cl, clIdx) => {
         const fb = feedback.find(f => f.clientId === `${city.name}-${clIdx}`);
         const statusReport = fb?.status === 'NAO_REALIZADO' ? 'NAO REALIZADO' : fb?.status;
