@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { 
   TECHNICIANS, 
@@ -11,7 +10,10 @@ import {
   INITIAL_STATE 
 } from './constants';
 import { AppState, EncerramentoFeedback, SavedTrip, FeedbackStatus } from './types';
-import { formatarData, getDiaSemana, listaComE, pad } from './utils';
+import { useAuth } from "./src/AuthContext";
+import LoginScreen from "./src/LoginScreen";
+import { authService } from "./src/authService";
+import { formatarData, getDiaSemana, listaComE, pad } from "./utils"; // Ajuste para todas as importações que buscam arquivos dentro de 'src'
 
 // Lista de atendentes autorizados para o fechamento
 const ATTENDANTS = ['', 'Alisson', 'Welvister', 'Uriel', 'Pedro', 'João', 'Willians', 'Keven', 'Amile'];
@@ -19,6 +21,9 @@ const ATTENDANTS = ['', 'Alisson', 'Welvister', 'Uriel', 'Pedro', 'João', 'Will
 const ITEMS_PER_PAGE = 10;
 
 const App: React.FC = () => {
+  // --- AUTENTICAÇÃO ---
+  const { currentUser, loading } = useAuth();
+
   // --- FUNÇÃO AUXILIAR DE ESTADO INICIAL ---
   // Garante que ao resetar ou iniciar, pegamos a data de hoje e hora 07:00
   const getFreshState = (): AppState => {
@@ -104,6 +109,15 @@ const App: React.FC = () => {
     setCurrentPage(1);
   }, [searchTerm, statusFilter]);
 
+  // --- VERIFICAÇÃO DE LOGIN ---
+  if (loading) {
+    return <div className="min-h-screen flex items-center justify-center bg-gray-100">Carregando...</div>;
+  }
+
+  if (!currentUser) {
+    return <LoginScreen />;
+  }
+
   // --- CLASSES DE ESTILO DINÂMICAS ---
   const themeBg = isDarkMode ? 'bg-[#1A202C] text-gray-100' : 'bg-gray-100 text-gray-900';
   // Removi bordas do themeCard para não conflitar com as bordas coloridas laterais
@@ -115,6 +129,12 @@ const App: React.FC = () => {
   const themeLabel = isDarkMode ? 'text-gray-400' : 'text-gray-500';
 
   // --- FUNÇÕES DE ESTADO ---
+
+  const handleLogout = async () => {
+    if (confirm("Deseja realmente sair do sistema?")) {
+      await authService.logout();
+    }
+  };
 
   const resetForm = () => {
     if (confirm("Deseja iniciar uma nova programação? Todos os dados não salvos do formulário atual serão perdidos.")) {
@@ -558,6 +578,14 @@ const App: React.FC = () => {
           className="text-center py-6 bg-blue-700 text-white rounded-xl shadow-lg border-b-4 border-blue-900 cursor-pointer hover:bg-blue-800 transition-colors group relative"
           title="Clique para iniciar uma Nova Programação (Limpar tudo)"
         >
+          {/* Botão de Logout no canto superior esquerdo */}
+          <div 
+            onClick={(e) => { e.stopPropagation(); handleLogout(); }}
+            className="absolute top-4 left-4 bg-red-600 hover:bg-red-700 text-white text-xs font-bold px-3 py-1.5 rounded transition-colors flex items-center gap-2 z-10"
+          >
+            <i className="fas fa-sign-out-alt"></i> SAIR
+          </div>
+
           <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity bg-white text-blue-800 text-xs font-bold px-2 py-1 rounded">
             NOVA PROGRAMAÇÃO <i className="fas fa-redo ml-1"></i>
           </div>

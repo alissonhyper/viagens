@@ -24,10 +24,11 @@
     // Configurações do React e aliases
     "allowJs": true,
     "jsx": "react-jsx",
+    "baseUrl": "./src", // Define a base de importação como 'src'
     "paths": {
-      "@/*": [
-        "./src/*" // Corrigi o caminho para apontar para /src/* (assumindo que suas pastas estão em src)
-      ]
+      "@/*": 
+        ["./*"] // Diz que @/ se refere a qualquer coisa dentro de src
+      
     },
     "allowImportingTsExtensions": true,
     "noEmit": true
