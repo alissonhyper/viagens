@@ -1,10 +1,15 @@
 // NOVO: Importa o tipo 'firestore' diretamente do módulo de compatibilidade
+
 import firebase from 'firebase/compat/app';
-import 'firebase/compat/firestore'; 
-
+import 'firebase/firestore'; 
 import { db, auth } from '../firebaseConfig'; 
+import { AppState } from '../types'; // <-- Importe sua AppState aqui!
 
-// O tipo de dado que esperamos salvar (simplificado)
+
+type FieldValueType = any; // Usamos 'any' se o tipo complexo não for acessível
+type TimestampType = any; // Usamos 'any' se o tipo complexo não for acessível
+
+// O tipo de dado que esperamos salvar/ler
 export interface Viagem {
   id?: string;
   destino: string;
@@ -14,15 +19,31 @@ export interface Viagem {
   autor_uid: string;
   autor_email: string | null;
   
-  // CORREÇÃO: Usamos 'firebase.firestore.FieldValue' que agora deve ser reconhecido
-  data_criacao: firebase.firestore.FieldValue; 
+  // Usamos 'any' temporariamente se FieldValue não for resolvido
+  data_criacao: any; 
+  
+  state: AppState; 
+  feedbacks?: any[];
+}
+
+export interface ViagemUpdatePayload {
+    destino?: string;
+    data_inicio?: string;
+    data_fim?: string;
+    orcamento?: number;
+    state?: any; 
+    feedbacks?: any[];
+    // Adicione aqui qualquer outra propriedade que você possa atualizar
 }
 
 export const firestoreService = {
 
   // 1. BUSCAR TODAS AS VIAGENS (COLABORATIVO)
   // Usa o 'onSnapshot' para atualizar em tempo real
-  subscribeToViagens: (callback: (viagens: Viagem[]) => void) => {
+  subscribeToViagens: 
+    (callback: (viagens: Viagem[]) => void, 
+    errorCallback: (error: firebase.firestore.FirestoreError) => void // <-- NOVO ARGUMENTO TIPADO
+  ) => {
     
     // Referência à coleção principal
     const viagensRef = db.collection('viagens');
@@ -35,32 +56,48 @@ export const firestoreService = {
       })) as Viagem[]; // Força a tipagem
 
       callback(viagens);
-    }, (error) => {
-      console.error("Erro ao buscar viagens:", error);
-    });
-    // O retorno desta função é o 'unsubscribe', que você usará no React para parar de ouvir.
-  },
+    }, errorCallback);
+    },
 
-  // 2. ADICIONAR UMA NOVA VIAGEM
-  addViagem: async (viagemData: Omit<Viagem, 'id' | 'autor_uid' | 'autor_email' | 'data_criacao'>) => {
-    
-    // Pega o UID do usuário logado e o e-mail para rastreamento
+// 2. ADICIONAR UMA NOVA VIAGEM
+// Usa ViagemUpdatePayload, que é a Viagem completa menos os metadados
+addViagem: async (viagemData: ViagemUpdatePayload) => {
     const currentUser = auth.currentUser;
     if (!currentUser) {
-      throw new Error("Usuário não autenticado. Não é possível salvar a viagem.");
+        throw new Error("Usuário não autenticado. Não é possível salvar a viagem.");
     }
-    
-    const novaViagem: Omit<Viagem, 'id'> = {
-      ...viagemData,
-      autor_uid: currentUser.uid,
-      autor_email: currentUser.email,
-      data_criacao: (firebase as any).firestore.FieldValue.serverTimestamp(), // Marca a hora no servidor
-    };
 
+    // 1. ✅ CORREÇÃO CRÍTICA: Desestrutura 'viagemData' para remover 'id' e 'id_viagem'
+    // O TypeScript reclama porque 'id' não deveria estar em ViagemUpdatePayload, 
+    // mas forçamos a remoção usando 'as any'.
+    const { id, id_viagem, ...dataToSave } = viagemData as any;
+    
+    // 2. Monta o objeto final para o Firestore APENAS com os dados limpos
+    const novaViagem = {
+        // ...dataToSave é o payload de entrada sem 'id' e 'id_viagem'
+        ...dataToSave,
+        autor_uid: currentUser.uid,
+        autor_email: currentUser.email,
+        // Usamos (firebase as any) apenas para fins de compilação/ambiente
+        data_criacao: (firebase as any).firestore.FieldValue.serverTimestamp(),
+    };
+    
     const viagensRef = db.collection('viagens');
     
-    await viagensRef.add(novaViagem);
-  }
+    // 3. Adiciona e retorna a referência
+    const docRef = await viagensRef.add(novaViagem);
+    return docRef;
+},
   
-  // Você pode adicionar funções para 'updateViagem' e 'deleteViagem' aqui.
-};
+    // 3. ATUALIZAR UMA VIAGEM EXISTENTE
+    // Usamos o novo tipo 'ViagemUpdatePayload' para resolver o erro.
+updateViagem: async (id: string, updates: ViagemUpdatePayload) => {
+        const viagensRef = db.collection('viagens').doc(id);
+        await viagensRef.update(updates);
+    },
+
+    // 4. DELETAR UMA VIAGEM (Para o botão da lixeira)
+deleteViagem: async (id: string) => {
+    const viagensRef = db.collection('viagens').doc(id);
+    await viagensRef.delete();
+}}

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useContext } from 'react';
 import { 
   TECHNICIANS, 
   ASSISTANTS, 
@@ -9,11 +9,14 @@ import {
   LUNCH_OPTIONS,
   INITIAL_STATE 
 } from './constants';
-import { AppState, EncerramentoFeedback, SavedTrip, FeedbackStatus } from './types';
+import { AppState, EncerramentoFeedback, FeedbackStatus } from './types';
 import { useAuth } from "./src/AuthContext";
 import LoginScreen from "./src/LoginScreen";
 import { authService } from "./src/authService";
 import { formatarData, getDiaSemana, listaComE, pad } from "./utils"; // Ajuste para todas as importações que buscam arquivos dentro de 'src'
+import DashboardScreen from './src/screens/DashboardScreen';
+// IMPORTAR O SERVIÇO DE DADOS COLABORATIVO
+import { firestoreService, ViagemUpdatePayload, Viagem } from './src/firestoreService';
 
 // Lista de atendentes autorizados para o fechamento
 const ATTENDANTS = ['', 'Alisson', 'Welvister', 'Uriel', 'Pedro', 'João', 'Willians', 'Keven', 'Amile'];
@@ -48,7 +51,7 @@ const App: React.FC = () => {
 
   const [activeTab, setActiveTab] = useState<'form' | 'history'>('form');
   const [state, setState] = useState<AppState>(getFreshState());
-  const [history, setHistory] = useState<SavedTrip[]>([]);
+  const [history, setHistory] = useState<Viagem[]>([]);  
   
   // Estado para controlar se estamos editando uma viagem existente
   const [editingTripId, setEditingTripId] = useState<string | null>(null);
@@ -59,7 +62,14 @@ const App: React.FC = () => {
   const [currentPage, setCurrentPage] = useState(1);
 
   // Estado para o Modo Escuro
-  const [isDarkMode, setIsDarkMode] = useState(false);
+  const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
+    // 1. Tenta buscar o valor salvo no localStorage usando a chave CORRETA
+    const savedTheme = localStorage.getItem('prog_viagem_theme');
+    
+    // 2. Retorna true SE o valor for exatamente 'dark'.
+    //    Se for 'light' ou null/undefined (primeiro acesso), retorna false.
+    return savedTheme === 'dark';
+  });
 
   // Buffer local para evitar cursor saltando e perda de espaços/quebras de linha
   const [localText, setLocalText] = useState<Record<string, string>>({});
@@ -71,23 +81,48 @@ const App: React.FC = () => {
   const [feedback, setFeedback] = useState<EncerramentoFeedback[]>([]);
   const [isEncerramentoVisible, setIsEncerramentoVisible] = useState(false);
 
-  // Carregar dados iniciais e tema
-  useEffect(() => {
+// ----------------------------------------------------
+// 1. useEffect de CARREGAMENTO INICIAL (Executa APENAS UMA VEZ)
+// ----------------------------------------------------
+useEffect(() => {
+    // Carregar dados iniciais (Draft e History)
     const savedDraft = localStorage.getItem('prog_viagem_draft');
     if (savedDraft) {
-      try { setState(JSON.parse(savedDraft)); } catch (e) { console.error(e); }
+        try { setState(JSON.parse(savedDraft)); } catch (e) { console.error(e); }
     }
     const savedHistory = localStorage.getItem('prog_viagem_history');
     if (savedHistory) {
-      try { setHistory(JSON.parse(savedHistory)); } catch (e) { console.error(e); }
+        try { setHistory(JSON.parse(savedHistory)); } catch (e) { console.error(e); }
     }
     
     // Carregar tema
     const savedTheme = localStorage.getItem('prog_viagem_theme');
     if (savedTheme) {
-      setIsDarkMode(savedTheme === 'dark');
+        // Inicializa o estado isDarkMode com o valor salvo
+        setIsDarkMode(savedTheme === 'dark'); 
     }
-  }, []);
+    
+// Sem dependências ([]), executa somente na montagem
+}, []); 
+
+
+// ----------------------------------------------------
+// 2. useEffect de PERSISTÊNCIA (Executa toda vez que isDarkMode mudar)
+// ----------------------------------------------------
+useEffect(() => {
+    // 1. Salva o estado atual do tema no localStorage
+    const themeToSave = isDarkMode ? 'dark' : 'light';
+    localStorage.setItem('prog_viagem_theme', themeToSave);
+
+    // 2. Adiciona ou remove a classe 'dark' no elemento <html> (para o Tailwind CSS)
+    if (isDarkMode) {
+        document.documentElement.classList.add('dark');
+    } else {
+        document.documentElement.classList.remove('dark');
+    }
+    
+// Executa toda vez que isDarkMode for alterado
+}, [isDarkMode]);
 
   // Salvar rascunho automaticamente
   useEffect(() => {
@@ -108,6 +143,33 @@ const App: React.FC = () => {
   useEffect(() => {
     setCurrentPage(1);
   }, [searchTerm, statusFilter]);
+
+// App.tsx (Bloco useEffect corrigido)
+
+// Carregar dados de Viagens do Firestore em tempo real
+useEffect(() => {
+    if (currentUser) {
+        
+        // 1. Função de callback para SUCESSO
+        const handleNewViagens = (viagens: Viagem[]) => {
+            // O setHistory já está tipado como Viagem[], então o TypeScript aceita
+            setHistory(viagens); 
+        };
+
+        // 2. Função de callback para ERRO
+        const handleError = (error: any) => {
+            console.error("Erro ao carregar histórico do Firestore:", error);
+        };
+
+        // 🛑 CORREÇÃO: Chamada e armazenamento da função unsubscribe
+        const unsubscribe = firestoreService.subscribeToViagens(
+            handleNewViagens, 
+            handleError
+        ); 
+
+        return () => unsubscribe();
+    }
+}, [currentUser]); // Depende do currentUser estar disponível
 
   // --- VERIFICAÇÃO DE LOGIN ---
   if (loading) {
@@ -275,98 +337,158 @@ const App: React.FC = () => {
     updateState('services', newServices);
   };
 
-  // --- LÓGICA DE VIAGEM (SALVAR, CARREGAR, EDITAR) ---
+// --- LÓGICA DE VIAGEM (SALVAR, CARREGAR, EDITAR) - AGORA COM FIRESTORE ---
 
-  const salvarViagem = (customFeedback?: EncerramentoFeedback[]) => {
-    const nomesCidades = state.cities.filter(c => c.enabled && c.name).map(c => c.name).join(', ');
-    const teamMembers = [state.technician, state.assistant].filter(Boolean);
-    const teamString = listaComE(teamMembers) || "Equipe";
-    
-    // Usa o feedback passado por parâmetro (para o caso de finalização) ou o estado atual
+    // 1. A função salvarViagem fará a comunicação com o Firestore
+const salvarViagem = async (customFeedback?: EncerramentoFeedback[]) => {
+    // ... (checa currentUser, define feedbacksToSave) ...
+
     const feedbacksToSave = customFeedback !== undefined ? customFeedback : (feedback.length > 0 ? feedback : undefined);
 
-    const tripData: SavedTrip = {
-      id: editingTripId || crypto.randomUUID(), // Se editando, mantém ID. Se novo, cria ID.
-      title: `${formatarData(state.date)} - ${state.startTime} - ${teamString} (${nomesCidades || 'Sem Cidade'})`,
-      timestamp: Date.now(),
-      state: JSON.parse(JSON.stringify(state)),
-      feedbacks: feedbacksToSave
-    };
+    // 🛑 NOVO BLOCO DE LIMPEZA
+    // 1. Cria uma cópia do objeto de estado para não alterar o estado original.
+    const stateCopy = JSON.parse(JSON.stringify(state)); 
+
+    // 2. Remove as propriedades que o Firestore não aceita/precisa para ADICIONAR.
+    // Se a propriedade existir no objeto (mesmo com valor undefined), ela é removida.
+    if (stateCopy.id !== undefined) delete stateCopy.id;
+    if (stateCopy.id_viagem !== undefined) delete stateCopy.id_viagem;
+    // Fim do NOVO BLOCO DE LIMPEZA
+
+    // 1. Prepara o Payload de dados (o que será enviado para o Firestore)
+    const payload: ViagemUpdatePayload = {
+    // Envie o 'state' original aqui, sem fazer JSON.parse/stringify ainda
+    state: state, 
+
+    feedbacks: feedbacksToSave || [],               
+
+    destino: state.cities.find(c => c.enabled)?.name || 'Programação sem Destino',
+    data_inicio: state.date, 
+    data_fim: state.date,     
+    orcamento: 0, 
+};
     
-    if (editingTripId) {
-      // ATUALIZAR EXISTENTE
-      setHistory(prev => prev.map(t => t.id === editingTripId ? tripData : t));
-    } else {
-      // CRIAR NOVA
-      setHistory(prev => [tripData, ...prev]);
-      setEditingTripId(tripData.id); // Entra em modo de edição da nova viagem automaticamente
-    }
-
-    return tripData.id;
-  };
-
-  const handleManualSave = () => {
-    salvarViagem();
-    alert(editingTripId ? "Alterações salvas com sucesso!" : "Nova viagem salva no histórico!");
-  };
-
-  const excluirViagem = (id: string) => {
-    if (confirm("Deseja realmente excluir esta viagem do histórico?")) {
-      setHistory(prev => prev.filter(v => v.id !== id));
-      if (editingTripId === id) {
-        resetForm(); // Se excluiu a que estava editando, reseta
-      }
-    }
-  };
-
-  const carregarViagem = (viagem: SavedTrip) => {
-    // Carregar os dados nos inputs
-    setState(viagem.state);
-    setLocalText({});
-    setFeedback(viagem.feedbacks || []);
-    
-    // Configurar modo de edição
-    setEditingTripId(viagem.id);
-    setActiveTab('form');
-    
-    // Configurar visualização de encerramento se houver feedback
-    setIsEncerramentoVisible(!!(viagem.feedbacks && viagem.feedbacks.length > 0));
-    
-    // Limpar outputs anteriores para evitar confusão
-    setOutput("");
-    setEncerramentoOutput("");
-    
-    alert(`Carregando viagem: ${viagem.title}`);
-  };
-
-  const carregarParaEncerramento = (viagem: SavedTrip) => {
-    carregarViagem(viagem);
-    iniciarEncerramento(); 
-    window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
-  };
-
-  const concluirViagemHistorico = (viagem: SavedTrip) => {
-    if (confirm("Deseja concluir esta viagem automaticamente? Isso marcará todos os atendimentos como REALIZADOS.")) {
-      const newFeedback: EncerramentoFeedback[] = [];
-      viagem.state.cities.forEach(city => {
-        if (city.enabled && city.name) {
-          city.clients.forEach((cl, clIdx) => {
-            if (cl.name && cl.name.trim() !== "") {
-              newFeedback.push({
-                clientId: `${city.name}-${clIdx}`,
-                status: 'REALIZADO',
-                attendantName: ""
-              });
-            }
-          });
+    // 2. Decide se é Adicionar ou Atualizar
+    try {
+        if (editingTripId) {
+            // ATUALIZAR EXISTENTE
+            await firestoreService.updateViagem(editingTripId, payload);
+            return editingTripId;
+        } else {
+            // CRIAR NOVA
+            // O firestoreService adiciona os campos autor_uid, autor_email e data_criacao
+            const newDocRef = await firestoreService.addViagem(payload); 
+            
+            // O Dashboard (onSnapshot) se atualiza automaticamente, mas precisamos atualizar o estado local 'editingTripId'
+            setEditingTripId(newDocRef.id); 
+            return newDocRef.id;
         }
-      });
-
-      setHistory(prev => prev.map(v => 
-        v.id === viagem.id ? { ...v, feedbacks: newFeedback } : v
-      ));
+    } catch (error) {
+        console.error("Erro ao salvar/atualizar no Firestore:", error);
+        throw new Error("Falha ao salvar a viagem no servidor. Verifique sua conexão.");
     }
-  };
+};
+
+const handleManualSave = async () => {
+    try {
+        await salvarViagem();
+        alert(editingTripId ? "Alterações salvas com sucesso!" : "Nova viagem salva no Histórico Colaborativo!");
+    } catch (error) {
+        // O erro já foi logado e alertado dentro de salvarViagem
+    }
+};
+
+const excluirViagem = async (id: string) => {
+    if (!currentUser) {
+        alert("Você precisa estar logado para excluir viagens.");
+        return;
+    }
+    if (confirm("Deseja realmente excluir esta viagem do histórico (permanente e colaborativo)?")) {
+        try {
+            await firestoreService.deleteViagem(id);
+            alert("Viagem excluída com sucesso do histórico.");
+            
+            // O onSnapshot no Dashboard já irá remover do histórico. Apenas o estado local precisa de ajuste:
+            if (editingTripId === id) {
+                resetForm();
+            }
+        } catch (error) {
+            console.error("Erro ao excluir viagem:", error);
+            alert("Falha ao excluir a viagem. Verifique se você tem permissão.");
+        }
+    }
+};
+
+// --- FUNÇÕES DE CARREGAMENTO (MANTIDAS) ---
+// Estas funções continuam usando o estado local (setState, setEditingTripId, etc.) e estão corretas.
+
+const carregarViagem = (viagem: Viagem) => { 
+    // OBS: O tipo 'SavedTrip' deve ser 'Viagem' agora, pois ele vem do firestoreService
+// 1. Preenche todos os campos do formulário
+    setState(viagem.state); 
+    // 2. Define o ID que está sendo editado (para o botão Salvar virar Atualizar)
+    setEditingTripId(viagem.id ?? null);
+    // 3. Muda a visualização para o formulário
+    setActiveTab('form');
+};
+
+const carregarParaEncerramento = (viagem: Viagem) => {
+    // 1. Preenche o formulário/estado com os dados da viagem finalizada
+    setState(viagem.state); 
+    
+    // 2. Define o ID da viagem. Isso é útil se houver algum botão de 'Reabrir Viagem'
+    // Apenas abre a aba viagem, "não estamos editando aqui, apenas observando"
+    setEditingTripId(null); 
+    
+    // 3. MUDA PARA A ABA DE ENCERRAMENTO/RELATÓRIO
+    // Baseado na sua imagem, a aba de encerramento parece ter o nome 'Relatorio' ou 'Encerramento'.
+    // Vamos usar 'encerramento' como um nome lógico, mas confirme se o seu componente tem essa aba.
+    setActiveTab('form');
+};
+
+// --- CONCLUSÃO AUTOMÁTICA DE VIAGEM (AGORA ATUALIZA O FIRESTORE) ---
+
+const concluirViagemHistorico = async (viagem: Viagem) => {
+    if (!currentUser) {
+        alert("Você precisa estar logado para concluir viagens.");
+        return;
+    }
+    
+    if (confirm("Deseja concluir esta viagem automaticamente? Isso marcará todos os atendimentos como REALIZADOS no histórico colaborativo.")) {
+        
+        // 1. Cria o feedback de conclusão (o mesmo código original)
+        const newFeedback: EncerramentoFeedback[] = [];
+        viagem.state.cities.forEach(city => {
+            if (city.enabled && city.name) {
+                city.clients.forEach((cl, clIdx) => {
+                    if (cl.name && cl.name.trim() !== "") {
+                        newFeedback.push({
+                            clientId: `${city.name}-${clIdx}`,
+                            status: 'REALIZADO',
+                            attendantName: ""
+                        });
+                    }
+                });
+            }
+        });
+
+        // 2. Prepara o Payload de ATUALIZAÇÃO MÍNIMO
+        const updatePayload: ViagemUpdatePayload = {
+            feedbacks: newFeedback
+        };
+
+        // 3. ATUALIZA O FIRESTORE
+        try {
+            await firestoreService.updateViagem(viagem.id!, updatePayload); 
+            alert("Viagem concluída e histórico atualizado em tempo real!");
+            
+            // Não precisa de setHistory(prev => ...) porque o Dashboard faz isso.
+        } catch (error) {
+            console.error("Erro ao concluir viagem:", error);
+            alert("Falha ao concluir a viagem no servidor.");
+        }
+    }
+};
 
   // --- LÓGICA DE FILTRAGEM E PAGINAÇÃO ---
 
@@ -605,12 +727,16 @@ const App: React.FC = () => {
           >
             <i className="fas fa-edit"></i> {editingTripId ? 'Editando Programação' : 'Nova Programação'}
           </button>
-          <button 
+          <button
+
             onClick={() => setActiveTab('history')}
+
             className={`flex-1 py-3 px-4 rounded-md font-bold text-sm uppercase transition-all flex items-center justify-center gap-2 ${activeTab === 'history' ? 'bg-blue-600 text-white shadow' : isDarkMode ? 'text-gray-400 hover:bg-[#4A5568]' : 'text-gray-500 hover:bg-gray-50'}`}
+
           >
-            <i className="fas fa-history"></i> Histórico ({history.length})
-          </button>
+
+            <i className="fas fa-history"></i> Histórico
+        </button>
         </nav>
 
         {activeTab === 'form' ? (
@@ -933,23 +1059,25 @@ const App: React.FC = () => {
             </div>
           </div>
         ) : (
-          <div className="space-y-6 animate-in fade-in duration-300">
+
+ <div className="space-y-6 animate-in fade-in duration-300">
             <div className={`flex flex-col gap-4 border-b-2 pb-4 ${isDarkMode ? 'border-gray-700' : 'border-gray-200'}`}>
               <div className="flex items-center justify-between">
                 <h2 className={`text-xl font-black uppercase flex items-center gap-2 ${isDarkMode ? 'text-white' : 'text-gray-800'}`}><i className="fas fa-history text-blue-600"></i> Histórico de Viagens</h2>
-                <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">{history.length} SALVAS</span>
+                {/* O length é correto, pois 'history' agora vem do Firestore */}
+                <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">{history.length} SALVAS</span> 
               </div>
-              
+                
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <div className="md:col-span-2 relative">
-                   <input 
+                    <input 
                     type="text" 
                     placeholder="Buscar por nome, cidade ou data..." 
                     value={searchTerm}
                     onChange={e => setSearchTerm(e.target.value)}
                     className={`w-full pl-10 pr-4 py-3 rounded-lg border outline-none text-sm font-bold uppercase ${themeInput}`}
-                   />
-                   <i className="fas fa-search absolute left-4 top-3.5 text-gray-400"></i>
+                    />
+                    <i className="fas fa-search absolute left-4 top-3.5 text-gray-400"></i>
                 </div>
                 <div>
                   <select 
@@ -965,6 +1093,7 @@ const App: React.FC = () => {
               </div>
             </div>
 
+            {/* 🛑 AQUI ESTÁ O MAP QUE VOCÊ QUERIA */}
             {filteredHistory.length === 0 ? (
               <div className={`text-center py-20 rounded-xl shadow-sm border border-dashed ${isDarkMode ? 'bg-[#2D3748] border-gray-600' : 'bg-white border-gray-300'}`}>
                 <i className="fas fa-folder-open text-5xl text-gray-200 mb-4"></i>
@@ -977,11 +1106,11 @@ const App: React.FC = () => {
                     const isFinalized = viagem.feedbacks && viagem.feedbacks.length > 0;
                     const statusColor = isFinalized ? 'border-green-500' : 'border-amber-500';
                     const isEditing = editingTripId === viagem.id;
-                    
+                      
                     const teamMembers = [viagem.state.technician, viagem.state.assistant].filter(Boolean);
                     const teamDisplay = listaComE(teamMembers) || "EQUIPE NÃO INFORMADA";
                     const citiesDisplay = viagem.state.cities.filter(c => c.enabled && c.name).map(c => c.name).join(', ') || "Sem Cidade";
-                    
+                      
                     const displayTitle = `${formatarData(viagem.state.date)} - ${viagem.state.startTime} - ${teamDisplay} (${citiesDisplay})`;
 
                     return (
@@ -1000,23 +1129,23 @@ const App: React.FC = () => {
                           <h3 className={`font-black text-base group-hover:text-blue-700 transition-colors uppercase ${isDarkMode ? 'text-white' : 'text-gray-800'}`}>{displayTitle}</h3>
                           <p className="text-xs text-gray-500 font-medium italic">{viagem.state.services.join(', ') || 'Sem serviços definidos'}</p>
                         </div>
-                        
+                            
                         <div className="flex flex-wrap gap-2">
                           <button onClick={() => carregarViagem(viagem)} className="bg-blue-50 hover:bg-blue-600 hover:text-white text-blue-600 px-4 py-2 rounded-lg text-xs font-black uppercase transition-all flex items-center gap-2">
                             <i className="fas fa-edit"></i> Editar
                           </button>
-                          
-                          {isFinalized ? (
-                            <button onClick={() => carregarParaEncerramento(viagem)} className="bg-indigo-50 hover:bg-indigo-600 hover:text-white text-indigo-600 px-4 py-2 rounded-lg text-xs font-black uppercase transition-all flex items-center gap-2">
-                              <i className="fas fa-file-alt"></i> Relatório
-                            </button>
-                          ) : (
-                            <button onClick={() => concluirViagemHistorico(viagem)} className="bg-emerald-50 hover:bg-emerald-600 hover:text-white text-emerald-600 px-4 py-2 rounded-lg text-xs font-black uppercase transition-all flex items-center gap-2">
-                              <i className="fas fa-check-double"></i> Concluir
-                            </button>
-                          )}
+                            
+                      {/* Apenas mostra o botão RELATÓRIO se a viagem estiver finalizada */}
+                           {isFinalized ? (
+                          <button onClick={() => carregarParaEncerramento(viagem)} className="bg-indigo-50 hover:bg-indigo-600 hover:text-white text-indigo-600 px-4 py-2 rounde  d-lg text-xs font-black uppercase transition-all flex items-center gap-2">
+                           <i className="fas fa-file-alt"></i> Relatório
+                          </button>
+                           ) : (
+                         // Se não estiver finalizada (ABERTA), não renderiza NADA (remove o botão 'Concluir')
+                         null 
+                           )}
 
-                          <button onClick={() => excluirViagem(viagem.id)} className="bg-red-50 hover:bg-red-600 hover:text-white text-red-600 px-4 py-2 rounded-lg text-xs font-black uppercase transition-all">
+                          <button onClick={() => viagem.id && excluirViagem(viagem.id)} className="bg-red-50 hover:bg-red-600 hover:text-white text-red-600 px-4 py-2 rounded-lg text-xs font-black uppercase transition-all">
                             <i className="fas fa-trash"></i>
                           </button>
                         </div>
@@ -1049,8 +1178,9 @@ const App: React.FC = () => {
                 )}
               </>
             )}
-          </div>
-        )}
+        </div>
+    )} {/* Fecha a condição ternária do activeTab */}
+
 
         <footer className="text-center py-10 text-gray-400 text-[10px] font-bold uppercase tracking-widest border-t">
           &copy; {new Date().getFullYear()} Programação de Viagem &bull; Eficiência Técnica &bull; feito por Alisson Silva
