@@ -1208,7 +1208,8 @@ const concluirViagemHistorico = async (viagem: Viagem) => {
                 <div className="grid grid-cols-1 gap-4">
                   {currentHistoryPage.map((viagem) => {
                     const isFinalized = viagem.feedbacks && viagem.feedbacks.length > 0;
-                    const statusColor = isFinalized ? 'border-green-500' : 'border-amber-500';
+                    const statusColor = isFinalized ? 'border-green-500 dark:border-green-500' // FINALIZADA (Verde)
+                                                   : 'border-amber-500 dark:border-amber-500'; // ABERTA (Âmbar/Laranja)
                     const isEditing = editingTripId === viagem.id;
                       
                     const teamMembers = [viagem.state.technician, viagem.state.assistant].filter(Boolean);

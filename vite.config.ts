@@ -4,6 +4,7 @@ import react from '@vitejs/plugin-react';
 import * as path from 'path';
 
 export default defineConfig(({ mode }) => {
+    
     const env = loadEnv(mode, '.', '');
     return {
         base: '/',
@@ -15,6 +16,15 @@ export default defineConfig(({ mode }) => {
         define: {
             'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY)
         },
+        
+        // 🛑 NOVO BLOCO DE CONFIGURAÇÃO DE BUILD 🛑
+        build: {
+            // Aumenta o limite de aviso de 500kb (padrão) para 1000kb (1MB)
+            // para silenciar o aviso de "Adjust chunk size limit..."
+            chunkSizeWarningLimit: 1000, 
+        },
+        // ------------------------------------------
+
         // 2. ADICIONAR O BLOCO RESOLVE COM ALIAS
         resolve: {
             alias: {
@@ -23,4 +33,5 @@ export default defineConfig(({ mode }) => {
             },
         }
     };
+    
 });
