@@ -23,6 +23,100 @@ const ATTENDANTS = ['', 'Alisson', 'Welvister', 'Uriel', 'Pedro', 'João', 'Will
 
 const ITEMS_PER_PAGE = 10;
 
+// --- COMPONENTE MODAL DE RELATÓRIO ---
+const gerarTextoRelatorio = (viagem: Viagem): string => {
+  const { state, feedbacks } = viagem;
+  const fbList = feedbacks || [];
+
+  const diaSemana = getDiaSemana(state.date);
+  const dataFormatada = formatarData(state.date);
+  const cidadesHabilitadas = state.cities.filter(c => c.enabled && c.name);
+  const nomesCidades = cidadesHabilitadas.map(c => c.name);
+  const teamMembers = [state.technician, state.assistant].filter(Boolean);
+
+  let text = `FECHAMENTO DA VIAGEM - ${diaSemana} (${dataFormatada})\n`;
+  text += `----------------------------------------------------------------------------\n`;
+  text += `🔧 EQUIPE: ${listaComE(teamMembers) || "NÃO INFORMADA"}\n`;
+  text += `📍 DESIGNAÇÃO: ${listaComE(nomesCidades) || "A DEFINIR"} – ${listaComE([...state.services]) || "A DEFINIR"}\n`;
+  text += `🕗 INÍCIO: ${state.startTime}\n\n`;
+
+  cidadesHabilitadas.forEach((city) => {
+      text += `----------------------------------------------------------------------------\n`;
+      
+      // Contagem de Realizados
+      const filledClients = city.clients.filter(cl => cl.name && cl.name.trim() !== "");
+      const total = filledClients.length;
+      let realizados = 0;
+      filledClients.forEach((cl, clIdx) => {
+           const key = `${city.name}-${clIdx}`;
+           const f = fbList.find(i => i.clientId === key);
+           if (f?.status === 'REALIZADO') realizados++;
+      });
+
+      text += `CIDADE: ${city.name.toUpperCase()} | REALIZADOS ${realizados}/${total}\n`;
+      text += `----------------------------------------------------------------------------\n`;
+      text += `ATENDIMENTOS AGENDADOS:\n`;
+
+      filledClients.forEach((cl, clIdx) => {
+          const key = `${city.name}-${clIdx}`;
+          const fb = fbList.find(f => f.clientId === key);
+          
+          const statusLabel = fb?.status === 'REALIZADO' ? 'REALIZADO' : (fb?.status === 'NAO_REALIZADO' ? 'NÃO REALIZADO' : (fb?.status || 'PENDENTE'));
+          const obs = cl.status && cl.status.trim() ? ` - ${cl.status.trim().toUpperCase()}` : "";
+          
+          text += `${clIdx + 1}. ${cl.name.trim().toUpperCase()}${obs} (${statusLabel})\n`;
+          
+          if (fb?.status === 'REALIZADO') {
+              text += `*O.S NA MESA DE: ${fb.attendantName || "NÃO INFORMADO"}\n`;
+          } else if (fb?.status === 'NAO_REALIZADO') {
+               text += `*O.S RETORNOU A BANDEJA\n`; 
+          }
+      });
+      text += `\n`;
+  });
+
+  return text.trim();
+};
+
+interface ModalRelatorioProps {
+  viagem: Viagem;
+  onClose: () => void;
+}
+
+const ModalRelatorio: React.FC<ModalRelatorioProps> = ({ viagem, onClose }) => {
+  const texto = gerarTextoRelatorio(viagem);
+  
+  const copiar = () => {
+    navigator.clipboard.writeText(texto).then(() => alert("Relatório copiado para a área de transferência!"));
+  };
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black bg-opacity-75 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+      <div className="bg-gray-900 rounded-xl shadow-2xl w-full max-w-4xl flex flex-col max-h-[90vh] border border-gray-700">
+        <div className="flex justify-between items-center p-5 border-b border-gray-800 bg-gray-900 rounded-t-xl">
+           <h3 className="text-white font-bold text-xl flex items-center gap-2">
+             <i className="fas fa-file-invoice text-indigo-400"></i> RELATÓRIO TÉCNICO
+           </h3>
+           <button onClick={onClose} className="text-gray-500 hover:text-white transition-colors">
+             <i className="fas fa-times text-xl"></i>
+           </button>
+        </div>
+        <div className="p-6 overflow-auto flex-1 bg-[#1a1b26]">
+           <pre className="font-mono text-sm text-gray-300 whitespace-pre-wrap leading-relaxed selection:bg-indigo-500 selection:text-white">{texto}</pre>
+        </div>
+        <div className="p-5 border-t border-gray-800 bg-gray-900 rounded-b-xl flex gap-4">
+           <button onClick={copiar} className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white py-3 rounded-lg font-black uppercase tracking-wider transition-all shadow-lg flex items-center justify-center gap-2">
+             <i className="fas fa-copy"></i> Copiar Texto
+           </button>
+           <button onClick={onClose} className="flex-1 bg-gray-700 hover:bg-gray-600 text-gray-200 py-3 rounded-lg font-black uppercase tracking-wider transition-all shadow-lg">
+             Fechar
+           </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const App: React.FC = () => {
   // --- AUTENTICAÇÃO ---
   const { currentUser, loading } = useAuth();
@@ -55,6 +149,9 @@ const App: React.FC = () => {
   
   // Estado para controlar se estamos editando uma viagem existente
   const [editingTripId, setEditingTripId] = useState<string | null>(null);
+
+  // Estado para visualização do Relatório (Modal)
+  const [relatorioViagem, setRelatorioViagem] = useState<Viagem | null>(null);
 
   // Estados para Filtros e Paginação do Histórico
   const [searchTerm, setSearchTerm] = useState("");
@@ -694,6 +791,13 @@ const concluirViagemHistorico = async (viagem: Viagem) => {
 
   return (
     <div className={`w-full min-h-screen pb-20 no-print font-sans transition-colors duration-300 ${themeBg}`}>
+      {relatorioViagem && (
+        <ModalRelatorio 
+          viagem={relatorioViagem} 
+          onClose={() => setRelatorioViagem(null)} 
+        />
+      )}
+
       <div className="max-w-4xl mx-auto p-4 space-y-6">
         <header 
           onClick={resetForm}
@@ -711,7 +815,7 @@ const concluirViagemHistorico = async (viagem: Viagem) => {
           <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity bg-white text-blue-800 text-xs font-bold px-2 py-1 rounded">
             NOVA PROGRAMAÇÃO <i className="fas fa-redo ml-1"></i>
           </div>
-          <h1 className="text-3xl font-extrabold uppercase tracking-tight">Programação de Viagem</h1>
+          <h1 className="text-3xl font-extrabold uppercase tracking-tight text-white">Programação de Viagem</h1>
           <p className="text-blue-200 text-sm mt-1 font-medium">abertura e fechamento de programações</p>
           {editingTripId && (
             <div className="mt-2 inline-block bg-amber-400 text-blue-900 px-3 py-1 rounded-full text-xs font-black uppercase animate-pulse">
@@ -1137,7 +1241,7 @@ const concluirViagemHistorico = async (viagem: Viagem) => {
                             
                       {/* Apenas mostra o botão RELATÓRIO se a viagem estiver finalizada */}
                            {isFinalized ? (
-                          <button onClick={() => carregarParaEncerramento(viagem)} className="bg-indigo-50 hover:bg-indigo-600 hover:text-white text-indigo-600 px-4 py-2 rounde  d-lg text-xs font-black uppercase transition-all flex items-center gap-2">
+                          <button onClick={() => setRelatorioViagem(viagem)} className="bg-indigo-50 hover:bg-indigo-600 hover:text-white text-indigo-600 px-4 py-2 rounded-lg text-xs font-black uppercase transition-all flex items-center gap-2">
                            <i className="fas fa-file-alt"></i> Relatório
                           </button>
                            ) : (
