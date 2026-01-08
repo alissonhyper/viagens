@@ -1252,42 +1252,62 @@ const concluirViagemHistorico = async (viagem: Viagem) => {
 
         <nav className={`flex p-1 rounded-lg shadow-inner border ${isDarkMode ? 'bg-[#2D3748] border-gray-600' : 'bg-white border-gray-200'}`}>
           {/* Botão Bandeja - MOVED TO FIRST */}
-          <button 
-            onClick={() => setActiveTab('tray')}
-            className={`py-3 px-4 rounded-md font-bold text-sm uppercase transition-all flex items-center justify-center gap-2 mx-1 ${activeTab === 'tray' ? 'bg-amber-500 text-white shadow-lg flex-[2]' : `flex-1 ${isDarkMode ? 'text-gray-400 hover:bg-[#4A5568]' : 'text-gray-500 hover:bg-gray-50'}`}`}
-            title="Bandeja de Viagens"
-          >
-            <i className="fas fa-inbox"></i> Bandeja
-          </button>
-
-          <button 
-            onClick={() => setActiveTab('form')}
-            className={`py-3 px-4 rounded-md font-bold text-sm uppercase transition-all flex items-center justify-center gap-2 ${activeTab === 'form' ? 'bg-blue-600 text-white shadow-lg flex-[2]' : `flex-1 ${isDarkMode ? 'text-gray-400 hover:bg-[#4A5568]' : 'text-gray-500 hover:bg-gray-50'}`}`}
-          >
-            <i className="fas fa-edit"></i> {editingTripId ? 'Editando' : 'Nova Programação'}
-          </button>
-          
-          <button
-            onClick={() => setActiveTab('history')}
-            className={`py-3 px-4 rounded-md font-bold text-sm uppercase transition-all flex items-center justify-center gap-2 ${activeTab === 'history' ? 'bg-blue-600 text-white shadow-lg flex-[2]' : `flex-1 ${isDarkMode ? 'text-gray-400 hover:bg-[#4A5568]' : 'text-gray-500 hover:bg-gray-50'}`}`}
-          >
-
-            <i className="fas fa-history"></i> Histórico
-        </button>
-
-        {can('admin') && (
-  <button
-    onClick={() => setActiveTab('admin')}
+          {/* Bandeja sempre */}
+  <button 
+    onClick={() => setActiveTab('tray')}
     className={`py-3 px-4 rounded-md font-bold text-sm uppercase transition-all flex items-center justify-center gap-2 mx-1 ${
-      activeTab === 'admin'
-        ? 'bg-blue-600 text-white shadow-lg flex-[2]'
+      activeTab === 'tray'
+        ? 'bg-amber-500 text-white shadow-lg flex-[2]'
         : `flex-1 ${isDarkMode ? 'text-gray-400 hover:bg-[#4A5568]' : 'text-gray-500 hover:bg-gray-50'}`
     }`}
-    title="Administração"
+    title="Bandeja de Viagens"
   >
-    <i className="fas fa-user-cog"></i> Admin
+    <i className="fas fa-inbox"></i> Bandeja
   </button>
-)}
+           {/* Nova Programação só para ALL */}
+  {can('all') && (
+    <button 
+      onClick={() => setActiveTab('form')}
+      className={`py-3 px-4 rounded-md font-bold text-sm uppercase transition-all flex items-center justify-center gap-2 ${
+        activeTab === 'form'
+          ? 'bg-blue-600 text-white shadow-lg flex-[2]'
+          : `flex-1 ${isDarkMode ? 'text-gray-400 hover:bg-[#4A5568]' : 'text-gray-500 hover:bg-gray-50'}`
+      }`}
+    >
+      <i className="fas fa-edit"></i> {editingTripId ? 'Editando' : 'Nova Programação'}
+    </button>
+  )}
+
+           {/* Histórico só para HISTORY (ou ALL, se seu can() já tratar) */}
+  {can('history') && (
+    <button
+      onClick={() => setActiveTab('history')}
+      className={`py-3 px-4 rounded-md font-bold text-sm uppercase transition-all flex items-center justify-center gap-2 ${
+        activeTab === 'history'
+          ? 'bg-blue-600 text-white shadow-lg flex-[2]'
+          : `flex-1 ${isDarkMode ? 'text-gray-400 hover:bg-[#4A5568]' : 'text-gray-500 hover:bg-gray-50'}`
+      }`}
+    >
+      <i className="fas fa-history"></i> Histórico
+    </button>
+  )}
+
+
+        {/* Admin só para ADMIN */}
+  {can('admin') && (
+    <button
+      onClick={() => setActiveTab('admin')}
+      className={`py-3 px-4 rounded-md font-bold text-sm uppercase transition-all flex items-center justify-center gap-2 mx-1 ${
+        activeTab === 'admin'
+          ? 'bg-blue-600 text-white shadow-lg flex-[2]'
+          : `flex-1 ${isDarkMode ? 'text-gray-400 hover:bg-[#4A5568]' : 'text-gray-500 hover:bg-gray-50'}`
+      }`}
+      title="Administração"
+    >
+      <i className="fas fa-user-cog"></i> Admin
+    </button>
+  )}
+
         </nav>
 
         {activeTab === 'form' ? (
