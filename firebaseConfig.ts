@@ -32,6 +32,7 @@ export const db = firebase.firestore();
 
 // Initialize Autenticação
 export const auth = firebase.auth();
+auth.languageCode = 'pt-BR';
 
 // Exportar o app para outros serviços
 export default app;

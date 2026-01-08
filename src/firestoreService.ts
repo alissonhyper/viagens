@@ -9,34 +9,48 @@ import { AppState } from '../types'; // <-- Importe sua AppState aqui!
 type FieldValueType = any; // Usamos 'any' se o tipo complexo não for acessível
 type TimestampType = any; // Usamos 'any' se o tipo complexo não for acessível
 
-// O tipo de dado que esperamos salvar/ler
-export interface Viagem {
+// Define a interface Viagem completa, incluindo o ID
+export interface Viagem { 
   id?: string;
+
+  // --- DADOS PRINCIPAIS ---
   destino: string;
   data_inicio: string;
   data_fim: string;
   orcamento: number;
+
   autor_uid: string;
   autor_email: string | null;
-  
-  // Usamos 'any' temporariamente se FieldValue não for resolvido
-  data_criacao: any; 
-  
-  state: AppState; 
+  data_criacao: any;
+
+  state: AppState;
   feedbacks?: any[];
+
+  // --- BANDEJA / PROGRAMAÇÃO ---
+  regiao: string;            // ex: "MATA VERDE"
+  cidade: string;            // ex: "MATA VERDE", "SAPATA"
+  status: 'PENDENTE' | 'REALIZADA' | string;
+
+  trayOrder?: number;        // ORDEM MANUAL DA BANDEJA
 }
 
-export interface ViagemUpdatePayload {
+// Define o payload para atualização (sem metadados)
+export interface ViagemUpdatePayload { 
     destino?: string;
     data_inicio?: string;
     data_fim?: string;
     orcamento?: number;
     state?: any; 
     feedbacks?: any[];
+    // --- BANDEJA / PROGRAMAÇÃO ---
+    regiao?: string;
+    cidade?: string;
+    status?: string;       // ou 'PENDENTE' | 'REALIZADA' | string
+    trayOrder?: number;
     // Adicione aqui qualquer outra propriedade que você possa atualizar
 }
 
-export const firestoreService = {
+export const firestoreService = { 
 
   // 1. BUSCAR TODAS AS VIAGENS (COLABORATIVO)
   // Usa o 'onSnapshot' para atualizar em tempo real
@@ -100,4 +114,17 @@ updateViagem: async (id: string, updates: ViagemUpdatePayload) => {
 deleteViagem: async (id: string) => {
     const viagensRef = db.collection('viagens').doc(id);
     await viagensRef.delete();
+},
+
+// 5. ATUALIZAR ORDEM DA BANDEJA (DRAG & DROP)
+atualizarOrdemViagensCompat: async (viagens: { id: string }[]) => {
+  const batch = db.batch();
+
+  viagens.forEach((viagem, index) => {
+    const ref = db.collection('viagens').doc(viagem.id);
+    batch.update(ref, { trayOrder: index });
+  });
+
+  await batch.commit();
 }}
+

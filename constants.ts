@@ -65,3 +65,40 @@ export const INITIAL_STATE = {
     clients: Array.from({ length: 30 }, () => ({ name: "", status: "" }))
   }))
 };
+
+// --- NOVAS CONSTANTES DA BANDEJA ---
+
+export const REGIONS: Record<string, string[]> = {
+  'Mata Verde': ['Mata Verde', 'Sapata'],
+  'Palmópolis': ['Palmópolis', 'Vila Formosa', 'Igrejinha'],
+  'Jacinto': ['Jacinto', 'Santo Antônio', 'Jaguarão', 'Bom Jardim', 'Salto da Divisa', 'Santa Maria'],
+  'Jequitinhonha': ['Jequitinhonha', 'Joaíma']
+};
+
+export const TRAY_STATUS_OPTIONS = [
+  "",
+  "SEM INTERNET",
+  "CLIENTE NOVO",
+  "LENTIDÃO",
+  "QUEDAS",
+  "CANCELAMENTO",
+  "COBRANÇA",
+  "TROCA DE TECNOLOGIA",
+  "TROCA DE TITULARIDADE",
+  "AMPLIAÇÃO",
+  "ORÇAMENTO",
+  "SERVIÇO DE REDE",
+  "MUDANÇA DE ENDEREÇO",
+  "ASSINATURA"
+];
+
+export const TRAY_EQUIPMENT_OPTIONS = [
+  "",
+  "ONU",
+  "ONT",
+  "HUAWEI AX3S",
+  "FIBERHOME 1500AX",
+  "GREATEK 1500AX",
+  "GREATEK 1200AC",
+  "INTELBRAS W6-1500"
+];

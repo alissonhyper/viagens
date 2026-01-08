@@ -7,19 +7,30 @@ import {
   ONT_MODELS, 
   ROUTER_MODELS, 
   LUNCH_OPTIONS,
-  INITIAL_STATE 
+  INITIAL_STATE,
+  REGIONS,
+  TRAY_STATUS_OPTIONS,
+  TRAY_EQUIPMENT_OPTIONS
 } from './constants';
-import { AppState, EncerramentoFeedback, FeedbackStatus } from './types';
+import { AppState, EncerramentoFeedback, FeedbackStatus, TrayItem } from './types';
 import { useAuth } from "./src/AuthContext";
 import LoginScreen from "./src/LoginScreen";
 import { authService } from "./src/authService";
 import { formatarData, getDiaSemana, listaComE, pad } from "./utils"; // Ajuste para todas as importações que buscam arquivos dentro de 'src'
-import DashboardScreen from './src/screens/DashboardScreen';
+
+// import DashboardScreen from './src/screens/DashboardScreen'; //
+
 // IMPORTAR O SERVIÇO DE DADOS COLABORATIVO
 import { firestoreService, ViagemUpdatePayload, Viagem } from './src/firestoreService';
+import { trayService } from './src/trayService';
+import { auth } from './firebaseConfig';
+import { AdminUsersScreen } from './src/screens/AdminUsersScreen';
+
+
+
 
 // Lista de atendentes autorizados para o fechamento
-const ATTENDANTS = ['', 'Alisson', 'Welvister', 'Uriel', 'Pedro', 'João', 'Willians', 'Keven', 'Amile'];
+const ATTENDANTS = ['', 'Alisson', 'Welvister', 'Uriel', 'Pedro', 'João', 'Willians', 'Keven', 'Amile', 'Rayssa'];
 
 const ITEMS_PER_PAGE = 10;
 
@@ -58,21 +69,28 @@ const gerarTextoRelatorio = (viagem: Viagem): string => {
       text += `ATENDIMENTOS AGENDADOS:\n`;
 
       filledClients.forEach((cl, clIdx) => {
-          const key = `${city.name}-${clIdx}`;
-          const fb = fbList.find(f => f.clientId === key);
-          
-          const statusLabel = fb?.status === 'REALIZADO' ? 'REALIZADO' : (fb?.status === 'NAO_REALIZADO' ? 'NÃO REALIZADO' : (fb?.status || 'PENDENTE'));
-          const obs = cl.status && cl.status.trim() ? ` - ${cl.status.trim().toUpperCase()}` : "";
-          
-          text += `${clIdx + 1}. ${cl.name.trim().toUpperCase()}${obs} (${statusLabel})\n`;
-          
-          if (fb?.status === 'REALIZADO') {
-              text += `*O.S NA MESA DE: ${fb.attendantName || "NÃO INFORMADO"}\n`;
-          } else if (fb?.status === 'NAO_REALIZADO') {
-               text += `*O.S RETORNOU A BANDEJA\n`; 
-          }
-      });
-      text += `\n`;
+  const key = `${city.name}-${clIdx}`;
+  const fb = fbList.find(f => f.clientId === key);
+  
+  const statusLabel =
+    fb?.status === 'REALIZADO' ? 'REALIZADO' :
+    fb?.status === 'NAO_REALIZADO' ? 'NÃO REALIZADO' :
+    fb?.status === 'AUSENTE' ? 'AUSENTE' : 
+    'PENDENTE';
+
+  const obs = cl.status && cl.status.trim()
+    ? ` - ${cl.status.trim().toUpperCase()}`
+    : "";
+
+  text += `${clIdx + 1}. ${cl.name.trim().toUpperCase()}${obs} (${statusLabel})\n`;
+
+  if (fb?.status === 'REALIZADO') {
+    text += `*O.S NA MESA DE: ${fb?.attendantName || "NÃO INFORMADO"}\n`; // REALIZADO
+  } else {
+    text += `*O.S RETORNOU A BANDEJA\n`; // AUSENTE ou NAO_REALIZADO
+  }
+  });
+   text += `\n`; 
   });
 
   return text.trim();
@@ -119,7 +137,7 @@ const ModalRelatorio: React.FC<ModalRelatorioProps> = ({ viagem, onClose }) => {
 
 const App: React.FC = () => {
   // --- AUTENTICAÇÃO ---
-  const { currentUser, loading } = useAuth();
+  const { currentUser, loading, can } = useAuth();
 
   // --- FUNÇÃO AUXILIAR DE ESTADO INICIAL ---
   // Garante que ao resetar ou iniciar, pegamos a data de hoje e hora 07:00
@@ -143,10 +161,74 @@ const App: React.FC = () => {
     return cleanState;
   };
 
-  const [activeTab, setActiveTab] = useState<'form' | 'history'>('form');
+  // REORDENAÇÃO DAS ABAS: Bandeja é a padrão agora
+  const [activeTab, setActiveTab] = useState<'form' | 'history' | 'tray' | 'admin'>('tray');
+ 
   const [state, setState] = useState<AppState>(getFreshState());
+  // Histórico de viagens
   const [history, setHistory] = useState<Viagem[]>([]);  
+
   
+// HISTÓRICO EM TEMPO REAL (VIAGENS)
+useEffect(() => {
+  if (!currentUser) return;
+
+  const unsubscribe = firestoreService.subscribeToViagens(
+    (viagens) => {
+      setHistory(viagens);
+      console.log("SNAPSHOT -> viagens:", viagens.length);
+    },
+    (err) => console.error("Erro subscribeToViagens:", err)
+  );
+
+  return () => unsubscribe();
+}, [currentUser]);
+
+// BANDEJA EM TEMPO REAL (COLEÇÃO "bandeja")
+useEffect(() => {
+  if (!currentUser) return;
+
+  const unsub = trayService.subscribe(
+    (items) => {
+      setTrayItems(items);
+      console.log("SNAPSHOT -> bandeja:", items.length);
+    },
+    (err) => console.error("Erro trayService.subscribe:", err)
+  );
+
+  return () => unsub();
+}, [currentUser]);
+
+
+
+  // --- TRAY STATE (BANDEJA) ---
+  const [trayItems, setTrayItems] = useState<TrayItem[]>([]);
+  // Estado para controlar a região ativa na bandeja
+  const [activeTrayRegion, setActiveTrayRegion] = useState<string | null>(null);
+  // Estado para controlar a cidade ativa na bandeja
+  const [activeTrayCity, setActiveTrayCity] = useState<string | null>(null);
+  // Estado para armazenar o ID do item sendo arrastado
+  const [draggedItemId, setDraggedItemId] = useState<string | null>(null);
+
+
+
+  
+
+  // Itens visíveis da bandeja (filtrados e ordenados)
+  const norm = (s?: string | null) => (s ?? "").trim().toUpperCase();
+
+  const computedTrayItems: TrayItem[] = trayItems
+  .filter(t =>
+    norm(t.region) === norm(activeTrayRegion) &&
+    norm(t.city) === norm(activeTrayCity) &&
+    norm(t.status) !== "REALIZADA"
+  )
+  .sort((a, b) => (a.trayOrder ?? 9999) - (b.trayOrder ?? 9999));
+
+  // Estado para destacar a linha alvo durante o drag over
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
+  const [dropPosition, setDropPosition] = useState<'above' | 'below' | null>(null);
+
   // Estado para controlar se estamos editando uma viagem existente
   const [editingTripId, setEditingTripId] = useState<string | null>(null);
 
@@ -192,6 +274,12 @@ useEffect(() => {
         try { setHistory(JSON.parse(savedHistory)); } catch (e) { console.error(e); }
     }
     
+    // Carregar Bandeja
+    const savedTray = localStorage.getItem('prog_viagem_tray');
+    if (savedTray) {
+        try { setTrayItems(JSON.parse(savedTray)); } catch (e) { console.error(e); }
+    }
+
     // Carregar tema
     const savedTheme = localStorage.getItem('prog_viagem_theme');
     if (savedTheme) {
@@ -230,6 +318,11 @@ useEffect(() => {
   useEffect(() => {
     localStorage.setItem('prog_viagem_history', JSON.stringify(history));
   }, [history]);
+
+  // Salvar bandeja
+  useEffect(() => {
+    localStorage.setItem('prog_viagem_tray', JSON.stringify(trayItems));
+  }, [trayItems]);
 
   // Salvar preferência de tema
   useEffect(() => {
@@ -363,9 +456,264 @@ useEffect(() => {
     });
   };
 
+  // --- TRAY FUNCTIONS ---
+  const addTrayItem = () => {
+    if (!activeTrayRegion || !activeTrayCity) {
+      alert("Selecione uma região e uma cidade primeiro.");
+      return;
+    }
+    const newItem: TrayItem = {
+      id: Math.random().toString(36).substr(2, 9),
+      region: activeTrayRegion,
+      city: activeTrayCity,
+      date: new Date().toISOString().split('T')[0],
+      clientName: "",
+      status: "",
+      equipment: "",
+      observation: "",
+      attendant: ""
+    };
+    setTrayItems([...trayItems, newItem]);
+};
+
+  const updateTrayItem = (id: string, field: keyof TrayItem, value: string) => {
+    setTrayItems(prev => prev.map(item => item.id === id ? { ...item, [field]: value } : item));
+};
+
+  const deleteTrayItem = async (id: string) => {
+  if (!window.confirm("Remover este item da bandeja?")) return;
+
+  try {
+    // remove da UI imediatamente
+    setTrayItems(prev => prev.filter(t => t.id !== id));
+
+    // remove do Firestore
+    await trayService.remove(id);
+  } catch (err) {
+    console.error("deleteTrayItem ERRO:", err);
+    alert("Falha ao remover. Veja o console.");
+  }
+};
+
+  const updateTrayField = async <K extends keyof TrayItem>(
+  id: string,
+  field: K,
+  value: TrayItem[K]
+) => {
+  // UI imediata
+  setTrayItems(prev => prev.map(t => (t.id === id ? { ...t, [field]: value } : t)));
+
+  // Persistência
+  try {
+    await trayService.update(id, { [field]: value } as Partial<TrayItem>);
+  } catch (err) {
+    console.error("updateTrayField ERRO:", err);
+  }
+};
+
+
+  // Função para adicionar uma nova linha na bandeja com estado mínimo
+  const addTrayRow = async () => {
+  try {
+    if (!activeTrayRegion || !activeTrayCity) return;
+
+    const nextOrder = computedTrayItems.length;
+
+    const payload: Omit<TrayItem, "id"> = {
+      region: activeTrayRegion,
+      city: activeTrayCity,
+      date: new Date().toISOString().split("T")[0],
+      clientName: "",
+      status: "PENDENTE",
+      equipment: "",
+      observation: "",
+      attendant: "",
+      trayOrder: nextOrder,
+    };
+
+    const docRef = await trayService.add(payload);
+    console.log("addTrayRow OK, doc id:", docRef?.id);
+  } catch (err) {
+    console.error("addTrayRow ERRO:", err);
+  }  
+};
+
+  // --- DRAG AND DROP FUNCTIONS ---
+  // Função de drag start corrigida
+  const handleDragStart = (
+  e: React.DragEvent<HTMLDivElement>,
+  id: string
+  ) => {
+    // Armazena o ID do item sendo arrastado
+    setDraggedItemId(id);
+    setDragOverId(null);
+  e.dataTransfer.effectAllowed = "move";
+  e.dataTransfer.setData("text/plain", id);
+};
+
+// Função de drag end corrigida
+const handleDragEnd = (_e: React.DragEvent<HTMLDivElement>) => {
+  setDraggedItemId(null);
+  setDragOverId(null);
+  setDropPosition(null);
+};
+  
+  const handleDragOver = (e: React.DragEvent<HTMLTableRowElement>, id: string) => {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = "move";
+
+  if (dragOverId !== id) setDragOverId(id);
+
+  const rect = e.currentTarget.getBoundingClientRect();
+  const isAbove = (e.clientY - rect.top) < rect.height / 2;
+  setDropPosition(isAbove ? 'above' : 'below');
+};
+
+  const handleDragEnterRow = (id: string) => {
+  setDragOverId(id);
+};
+
+  const handleDragLeaveRow = (
+  e: React.DragEvent<HTMLTableRowElement>,
+  id: string
+) => {
+  // evita “piscar” quando o mouse passa por elementos dentro da mesma linha
+  const related = e.relatedTarget as Node | null;
+  if (related && e.currentTarget.contains(related)) return;
+
+  setDragOverId(prev => (prev === id ? null : prev));
+};
+
+
+const handleDrop = async (
+  e: React.DragEvent<HTMLTableRowElement>,
+  targetId: string
+) => {
+  e.preventDefault();
+  if (!draggedItemId || draggedItemId === targetId) return;
+
+  // limpa UI do hover/linha
+  setDragOverId(null);
+  setDropPosition(null);
+
+  // itens visíveis da cidade/região atual (já ordenados pelo trayOrder)
+  const visible: TrayItem[] = computedTrayItems;
+
+  const moved = visible.find(v => v.id === draggedItemId);
+  if (!moved) return;
+
+  // remove o item arrastado
+  const remaining = visible.filter(v => v.id !== draggedItemId);
+
+  // encontra o alvo na lista sem o item arrastado
+  const targetIndex = remaining.findIndex(v => v.id === targetId);
+  if (targetIndex === -1) return;
+
+  // decide posição final (acima/abaixo). Se dropPosition vier null, cai no "acima".
+  const insertIndex =
+    dropPosition === 'below' ? targetIndex + 1 : targetIndex;
+
+  // cria nova ordem
+  const reordered = [...remaining];
+  reordered.splice(insertIndex, 0, moved);
+
+  // aplica trayOrder sequencial
+  const reorderedWithOrder = reordered.map((v, index) => ({
+    ...v,
+    trayOrder: index,
+  }));
+
+  // 1) atualiza UI imediatamente (somente itens da cidade/região ativa)
+  const orderMap = new Map(reorderedWithOrder.map(v => [v.id, v.trayOrder]));
+
+  setTrayItems(prev =>
+    prev.map(t => {
+      const isSameScope =
+        t.region === activeTrayRegion &&
+        t.city === activeTrayCity &&
+        (t.status ?? '').toUpperCase() !== 'REALIZADA';
+
+      if (!isSameScope) return t;
+
+      const newOrder = orderMap.get(t.id);
+      return newOrder === undefined ? t : { ...t, trayOrder: newOrder };
+    })
+  );
+
+  // 2) persiste no Firestore (isso é o que garante NÃO SUMIR no refresh)
+  try {
+  await trayService.updateOrder(
+  reorderedWithOrder.map(v => ({ id: v.id, trayOrder: v.trayOrder ?? 0 }))
+  );
+  } catch (err) {
+  console.error("Erro ao salvar ordem da bandeja:", err);
+  } finally {
+  setDraggedItemId(null);
+}
+
+  
+  // 3) garante que o estado completo da bandeja seja atualizado corretamente
+ /* setTrayItems(prev => {
+    const isSameGroup = (t: TrayItem) =>
+      t.region === activeTrayRegion &&
+      t.city === activeTrayCity &&
+      t.status !== 'REALIZADA';
+
+    const others = prev.filter((t: TrayItem) => !isSameGroup(t));
+    return [...others, ...reorderedWithOrder];
+  }); */
+
+  setDragOverId(null);
+};
+
+  
+  const getRegionCount = (regionName: string) => {
+    // Conta itens que pertencem a qualquer cidade desta região
+    // As cidades são definidas em REGIONS[regionName]
+    const cities = REGIONS[regionName] || [];
+    return trayItems.filter(t => cities.includes(t.city)).length;
+  };
+
+  const getCityCount = (cityName: string) => trayItems.filter(t => t.city === cityName).length;
+
   const updateCity = (index: number, updates: Partial<AppState['cities'][0]>) => {
     setState(prev => {
       const newCities = [...prev.cities];
+      
+      // Se o update contiver nome (ex: digitou no input) ou enabled e já tem nome
+      let finalName = updates.name !== undefined ? updates.name : newCities[index].name;
+      let newClients = newCities[index].clients;
+
+      // 1. Limpeza Automática: Se o nome estiver vazio, limpa os clientes.
+      if (updates.name !== undefined && updates.name.trim() === "") {
+          newClients = Array.from({ length: 30 }, () => ({ name: "", status: "" }));
+      }
+      // 2. Validação Estrita e Preenchimento: Se houver nome, busca na bandeja.
+      else if ((updates.enabled === true || (updates.name && newCities[index].enabled)) && finalName) {
+         // Filtrar itens da bandeja para esta cidade (CASE INSENSITIVE)
+         const stagedItems = trayItems.filter(t => t.city.toLowerCase() === finalName!.trim().toLowerCase());
+         
+         // Se houver correspondência EXATA (case-insensitive), preenche.
+         // Se não houver, limpa os clientes (não mostra dados parciais ou antigos).
+         newClients = Array.from({ length: 30 }, () => ({ name: "", status: "" }));
+         
+         if (stagedItems.length > 0) {
+             stagedItems.forEach((item, i) => {
+                 if (i < 30) {
+                     newClients[i] = {
+                         name: item.clientName.toUpperCase(),
+                         status: item.status.toUpperCase()
+                     };
+                 }
+             });
+         }
+         updates.clients = newClients;
+      } else if (updates.name !== undefined && !finalName) {
+          // Fallback para garantir limpeza se undefined
+          newClients = Array.from({ length: 30 }, () => ({ name: "", status: "" }));
+          updates.clients = newClients;
+      }
+
       newCities[index] = { ...newCities[index], ...updates };
       return { ...prev, cities: newCities };
     });
@@ -554,13 +902,14 @@ const concluirViagemHistorico = async (viagem: Viagem) => {
     if (confirm("Deseja concluir esta viagem automaticamente? Isso marcará todos os atendimentos como REALIZADOS no histórico colaborativo.")) {
         
         // 1. Cria o feedback de conclusão (o mesmo código original)
-        const newFeedback: EncerramentoFeedback[] = [];
+        const newFeedback: EncerramentoFeedback[] = []; 
         viagem.state.cities.forEach(city => {
             if (city.enabled && city.name) {
                 city.clients.forEach((cl, clIdx) => {
                     if (cl.name && cl.name.trim() !== "") {
                         newFeedback.push({
                             clientId: `${city.name}-${clIdx}`,
+                            cityName: city.name, 
                             status: 'REALIZADO',
                             attendantName: ""
                         });
@@ -577,7 +926,34 @@ const concluirViagemHistorico = async (viagem: Viagem) => {
         // 3. ATUALIZA O FIRESTORE
         try {
             await firestoreService.updateViagem(viagem.id!, updatePayload); 
-            alert("Viagem concluída e histórico atualizado em tempo real!");
+            
+            // LIMPEZA AUTOMÁTICA DA BANDEJA
+            // Remove itens da bandeja que correspondem a clientes realizados nesta viagem
+            const clientsToRemove = newFeedback
+                .filter(fb => fb.status === 'REALIZADO')
+                .map(fb => {
+                    // clientId format: "CityName-Index"
+                    const parts = fb.clientId.split('-');
+                    const city = parts[0];
+                    const idx = parseInt(parts[1]);
+                    // Encontrar o nome do cliente no estado original da viagem (ou atualizado)
+                    const clientObj = viagem.state.cities.find(c => c.name === city)?.clients[idx];
+                    return { city, name: clientObj?.name };
+                })
+                .filter(c => c.name); // Ensure name exists
+
+            if (clientsToRemove.length > 0) {
+                setTrayItems(prev => prev.filter(item => {
+                    // Mantém o item SE ele NÃO estiver na lista de removidos
+                    const isProcessed = clientsToRemove.some(
+                        removed => removed.city.toLowerCase() === item.city.toLowerCase() && 
+                           removed.name?.trim().toLowerCase() === item.clientName.trim().toLowerCase()
+            );
+            return !isProcessed;
+        }));
+    }
+
+            alert("Viagem concluída, histórico atualizado e itens processados removidos da Bandeja!");
             
             // Não precisa de setHistory(prev => ...) porque o Dashboard faz isso.
         } catch (error) {
@@ -684,31 +1060,44 @@ const concluirViagemHistorico = async (viagem: Viagem) => {
       return;
     }
 
-    const newFeedback: EncerramentoFeedback[] = [];
-    state.cities.forEach(city => {
-      if (city.enabled && city.name) {
-        city.clients.forEach((cl, clIdx) => {
-          if (cl.name && cl.name.trim() !== "") {
-            newFeedback.push({
-              clientId: `${city.name}-${clIdx}`,
-              status: 'REALIZADO',
-              attendantName: ""
-            });
-          }
-        });
-      }
-    });
-    setFeedback(newFeedback);
-    setIsEncerramentoVisible(true);
-  };
 
-  const finalizarEGerarRelatorio = () => {
+  const newFeedback: EncerramentoFeedback[] = [];
+  // Percorre cidades e clientes para gerar feedback inicial
+  state.cities.forEach(city => {
+    if (city.enabled && city.name) {
+      city.clients.forEach((cl, clIdx) => { 
+        const clientName = (cl.name ?? "").trim();
+        if (clientName !== "") {
+          // ✅ pega atendente da bandeja para este cliente/cidade
+          const trayMatch = trayItems.find(t =>
+            (t.city ?? "").trim().toLowerCase() === city.name.trim().toLowerCase() &&
+            (t.clientName ?? "").trim().toLowerCase() === clientName.toLowerCase()
+            );
+          // Adiciona o feedback como REALIZADO
+          
+          newFeedback.push({
+            clientId: `${city.name}-${clIdx}`,
+            cityName: city.name,
+            status: "REALIZADO",
+            attendantName: trayMatch?.attendant ?? "",
+            trayItemId: trayMatch?.id,
+          });
+        }
+      });
+    }
+  });
+
+  setFeedback(newFeedback);
+  setIsEncerramentoVisible(true);
+};
+
+  const finalizarEGerarRelatorio = async () => {
     // 1. Gera o Texto
     const diaSemana = getDiaSemana(state.date);
     const dataFormatada = formatarData(state.date);
     const cidadesHabilitadas = state.cities.filter(c => c.enabled && c.name);
     const nomesCidades = cidadesHabilitadas.map(c => c.name);
-
+    // Monta o texto
     let text = `FECHAMENTO DA VIAGEM - ${diaSemana} (${dataFormatada})\n`;
     text += `----------------------------------------------------------------------------\n`;
     const teamMembers = [state.technician, state.assistant].filter(Boolean);
@@ -723,31 +1112,68 @@ const concluirViagemHistorico = async (viagem: Viagem) => {
       const filledClients = city.clients.filter(cl => cl.name && cl.name.trim() !== "");
       const total = filledClients.length;
       let realizados = 0;
-      
+      // Conta quantos foram REALIZADOS
       filledClients.forEach((cl, clIdx) => {
         const fb = feedback.find(f => f.clientId === `${city.name}-${clIdx}`);
         if (fb?.status === 'REALIZADO') realizados++;
       });
-
+      // Adiciona ao texto
       text += `CIDADE: ${city.name.toUpperCase()} | REALIZADOS ${realizados}/${total}\n`;
       text += `----------------------------------------------------------------------------\n`;
       text += `ATENDIMENTOS AGENDADOS:\n`;
-
+      // Lista clientes com status
       filledClients.forEach((cl, clIdx) => {
         const fb = feedback.find(f => f.clientId === `${city.name}-${clIdx}`);
-        const statusReport = fb?.status === 'NAO_REALIZADO' ? 'NAO REALIZADO' : fb?.status;
-        text += `${clIdx + 1}. ${cl.name.trim().toUpperCase()}${cl.status && cl.status.trim() ? ` - ${cl.status.trim().toUpperCase()}` : ""} (${statusReport})\n`;
-        if (fb?.status === 'REALIZADO') {
-          text += `*O.S NA MESA DE: ${fb.attendantName || ""}\n`;
-        } else {
-          text += `*O.S RETORNOU A BANDEJA\n`;
+          const statusLabel =
+  fb?.status === 'REALIZADO' ? 'REALIZADO' :
+  fb?.status === 'NAO_REALIZADO' ? 'NÃO REALIZADO' :
+  fb?.status === 'AUSENTE' ? 'AUSENTE' :
+  'PENDENTE';
+        text += `${clIdx + 1}. ${cl.name.trim().toUpperCase()}${cl.status && cl.status.trim() ? ` - ${cl.status.trim().toUpperCase()}` : ""} (${statusLabel})\n`;
+        if (fb?.status === 'REALIZADO') { 
+          text += `*O.S NA MESA DE: ${fb.attendantName || ""}\n`; // REALIZADO
+        } else { 
+          text += `*O.S RETORNOU A BANDEJA\n`; // AUSENTE ou NAO_REALIZADO
         }
       });
-      text += `\n`;
+      text += `\n`; 
     });
     
     // 2. Salva no Histórico como Finalizada (com feedbacks)
-    salvarViagem(feedback);
+    // Isso é assíncrono, mas o update de estado abaixo é síncrono.
+    // Para limpar a bandeja corretamente, precisamos saber quais clientes foram finalizados.
+    // Usamos a lista local 'feedback' para calcular o cleanup.
+    
+    await salvarViagem(feedback);
+
+
+   // ✅ Persistir na BANDEJA: remove REALIZADOS e garante status nos que retornam
+  try {
+    const ops = feedback.map(async (fb) => {
+      if (!fb.trayItemId) return;
+
+      // pega o client do state para recuperar o status textual (SEM INTERNET, etc.)
+      const [cityName, idxStr] = fb.clientId.split("-");
+      const idx = Number(idxStr);
+      const cl = state.cities.find(c => c.name === cityName)?.clients[idx];
+      const statusTexto = (cl?.status ?? "").trim();
+
+      if (fb.status === "REALIZADO") {
+        await trayService.remove(fb.trayItemId);
+      } else {
+        // AUSENTE / NAO_REALIZADO -> permanece na bandeja
+        // garante que o status não volte vazio
+        await trayService.update(fb.trayItemId, {
+          status: statusTexto || "PENDENTE",
+        });
+      }
+    });
+
+    await Promise.all(ops);
+  } catch (e) {
+    console.error("Erro ao sincronizar bandeja pós-encerramento:", e);
+  }
+
     
     // 3. Reseta o formulário (Estado Limpo), mas mostra o resultado
     setState(INITIAL_STATE);
@@ -759,7 +1185,7 @@ const concluirViagemHistorico = async (viagem: Viagem) => {
     setEncerramentoOutput(text.trim());
     setIsEncerramentoVisible(true); // Mantém a modal visível para ver o texto
     
-    alert("Viagem finalizada, salva no histórico e formulário resetado!");
+    alert("Viagem finalizada, salva no histórico, itens processados removidos da Bandeja e formulário resetado!");
   };
 
   const copiarTexto = (text: string) => {
@@ -798,7 +1224,7 @@ const concluirViagemHistorico = async (viagem: Viagem) => {
         />
       )}
 
-      <div className="max-w-4xl mx-auto p-4 space-y-6">
+      <div className={`mx-auto p-4 space-y-6 ${activeTab === 'tray' ? 'w-full max-w-[1600px]' : 'max-w-4xl'}`}>
         <header 
           onClick={resetForm}
           className="text-center py-6 bg-blue-700 text-white rounded-xl shadow-lg border-b-4 border-blue-900 cursor-pointer hover:bg-blue-800 transition-colors group relative"
@@ -825,22 +1251,43 @@ const concluirViagemHistorico = async (viagem: Viagem) => {
         </header>
 
         <nav className={`flex p-1 rounded-lg shadow-inner border ${isDarkMode ? 'bg-[#2D3748] border-gray-600' : 'bg-white border-gray-200'}`}>
+          {/* Botão Bandeja - MOVED TO FIRST */}
+          <button 
+            onClick={() => setActiveTab('tray')}
+            className={`py-3 px-4 rounded-md font-bold text-sm uppercase transition-all flex items-center justify-center gap-2 mx-1 ${activeTab === 'tray' ? 'bg-amber-500 text-white shadow-lg flex-[2]' : `flex-1 ${isDarkMode ? 'text-gray-400 hover:bg-[#4A5568]' : 'text-gray-500 hover:bg-gray-50'}`}`}
+            title="Bandeja de Viagens"
+          >
+            <i className="fas fa-inbox"></i> Bandeja
+          </button>
+
           <button 
             onClick={() => setActiveTab('form')}
-            className={`flex-1 py-3 px-4 rounded-md font-bold text-sm uppercase transition-all flex items-center justify-center gap-2 ${activeTab === 'form' ? 'bg-blue-600 text-white shadow' : isDarkMode ? 'text-gray-400 hover:bg-[#4A5568]' : 'text-gray-500 hover:bg-gray-50'}`}
+            className={`py-3 px-4 rounded-md font-bold text-sm uppercase transition-all flex items-center justify-center gap-2 ${activeTab === 'form' ? 'bg-blue-600 text-white shadow-lg flex-[2]' : `flex-1 ${isDarkMode ? 'text-gray-400 hover:bg-[#4A5568]' : 'text-gray-500 hover:bg-gray-50'}`}`}
           >
-            <i className="fas fa-edit"></i> {editingTripId ? 'Editando Programação' : 'Nova Programação'}
+            <i className="fas fa-edit"></i> {editingTripId ? 'Editando' : 'Nova Programação'}
           </button>
+          
           <button
-
             onClick={() => setActiveTab('history')}
-
-            className={`flex-1 py-3 px-4 rounded-md font-bold text-sm uppercase transition-all flex items-center justify-center gap-2 ${activeTab === 'history' ? 'bg-blue-600 text-white shadow' : isDarkMode ? 'text-gray-400 hover:bg-[#4A5568]' : 'text-gray-500 hover:bg-gray-50'}`}
-
+            className={`py-3 px-4 rounded-md font-bold text-sm uppercase transition-all flex items-center justify-center gap-2 ${activeTab === 'history' ? 'bg-blue-600 text-white shadow-lg flex-[2]' : `flex-1 ${isDarkMode ? 'text-gray-400 hover:bg-[#4A5568]' : 'text-gray-500 hover:bg-gray-50'}`}`}
           >
 
             <i className="fas fa-history"></i> Histórico
         </button>
+
+        {can('admin') && (
+  <button
+    onClick={() => setActiveTab('admin')}
+    className={`py-3 px-4 rounded-md font-bold text-sm uppercase transition-all flex items-center justify-center gap-2 mx-1 ${
+      activeTab === 'admin'
+        ? 'bg-blue-600 text-white shadow-lg flex-[2]'
+        : `flex-1 ${isDarkMode ? 'text-gray-400 hover:bg-[#4A5568]' : 'text-gray-500 hover:bg-gray-50'}`
+    }`}
+    title="Administração"
+  >
+    <i className="fas fa-user-cog"></i> Admin
+  </button>
+)}
         </nav>
 
         {activeTab === 'form' ? (
@@ -1116,7 +1563,20 @@ const concluirViagemHistorico = async (viagem: Viagem) => {
                                       return (
                                         <button 
                                           key={s} 
-                                          onClick={() => setFeedback(prev => prev.map(f => f.clientId === clientKey ? { ...f, status: s } : f))}
+                                          onClick={() => {
+                                              let newAttendant = fbItem?.attendantName || "";
+                                              if (s === 'REALIZADO') {
+                                                  // AUTOMAÇÃO DO ATENDENTE: Busca na Bandeja o match exato
+                                                  const trayMatch = trayItems.find(t => 
+                                                      t.city.trim().toLowerCase() === city.name.trim().toLowerCase() && 
+                                                      t.clientName.trim().toLowerCase() === cl.name.trim().toLowerCase()
+                                                  );
+                                                  if (trayMatch && trayMatch.attendant) {
+                                                      newAttendant = trayMatch.attendant;
+                                                  }
+                                              }
+                                              setFeedback(prev => prev.map(f => f.clientId === clientKey ? { ...f, status: s, attendantName: newAttendant } : f));
+                                          }}
                                           className={`px-3 py-2 rounded-md text-[10px] font-black transition-all ${activeStyle}`}
                                         >
                                           {s.replace('_', ' ')}
@@ -1160,7 +1620,364 @@ const concluirViagemHistorico = async (viagem: Viagem) => {
                   )}
                 </div>
               )}
+
+              
             </div>
+          </div>
+
+) : activeTab === 'admin' ? (
+  can('admin') ? (
+    <AdminUsersScreen />
+  ) : (
+    <div className="p-4 rounded-lg border border-red-200 bg-red-50 text-red-700">
+      Você não tem permissão para acessar o Admin.
+    </div>
+  )
+
+        ) : activeTab === 'tray' ? (
+          <div className="space-y-6 animate-in fade-in duration-300">
+            {/* TRAY UI HEADER - LARGURA EXPANDIDA JÁ APLICADA NO CONTAINER PAI */}
+            <div className={`p-5 rounded-xl shadow-md border-l-4 border-amber-500 space-y-4 ${themeCard}`}>
+                <h2 className={`font-black flex items-center text-lg uppercase ${isDarkMode ? 'text-white' : 'text-gray-800'}`}>
+                    <i className="fas fa-inbox mr-3 text-amber-500"></i> BANDEJA DE VIAGENS
+                </h2>
+                
+                
+                {/* NÍVEL 1: REGIÕES COM DESTAQUE CONDICIONAL */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    {Object.keys(REGIONS).map(region => {
+                        const regionCount = getRegionCount(region);
+                        const hasItems = regionCount > 0;
+                        return (
+                        <button
+                            key={region}
+                            onClick={() => { setActiveTrayRegion(region); setActiveTrayCity(null); }}
+                            className={`relative overflow-hidden py-6 px-4 rounded-xl text-xs md:text-sm font-black uppercase transition-all flex flex-col items-center justify-center gap-1 hover:brightness-110 border-2
+  ${activeTrayRegion === region
+    ? `bg-amber-500 text-white border-amber-200
+     shadow-[0_18px_22px_-18px_rgba(245,158,11,0.75)]
+     ring-1 ring-white/30
+     -translate-y-[1px]`
+    : isDarkMode
+      ? 'bg-[#2D3748] text-gray-100 border-transparent hover:bg-[#4A5568] shadow-md'
+      : 'bg-gray-100 text-gray-600 border-transparent hover:bg-gray-200 shadow-md'
+  }
+
+  ${
+    // ✅ SOMBRA FIXA “embaixo” quando tem itens e NÃO está selecionado
+    hasItems && activeTrayRegion !== region
+      ? (isDarkMode
+          ? 'shadow-[0_17px_20px_-19px_rgba(245,158,11,0.60)]'
+          : 'shadow-[0_25px_20px_-20px_rgba(245,158,11,0.55)]')
+      : ''
+  }
+
+  ${
+    // ✅ GLOW/NEON no fundo (só no hover) quando tem itens e NÃO está selecionado
+    hasItems && activeTrayRegion !== region
+      ? `
+        before:content-['']
+        before:absolute
+        before:inset-0
+        before:-z-10
+        before:rounded-xl
+        before:translate-y-2
+        before:blur-2xl
+        before:opacity-0
+        before:transition-opacity
+        before:duration-200
+        hover:before:opacity-90
+        before:bg-amber-400/55
+      `
+      : ''
+  }
+
+  ${hasItems && activeTrayRegion !== region ? 'border-amber-500' : ''}
+`}
+                              >
+                            {region}
+                            <span
+  className={`text-[10px] px-2 py-0.5 rounded-full shadow-[0_8px_10px_-10px_rgba(0,0,0,0.35)]
+    ${activeTrayRegion === region ? 'bg-black/30 text-white' : 'bg-gray-400 text-white'}`}
+>
+                                {regionCount} Ordens
+                            </span>
+                        </button>
+                    )})}
+              </div>
+
+                {/* NÍVEL 2: CIDADES COM AJUSTE DE COR DARK MODE */}
+                {activeTrayRegion && (
+                    <div className="flex flex-wrap gap-2 pt-2 animate-in slide-in-from-top-2">
+                        {REGIONS[activeTrayRegion].map(city => {
+                            const count = getCityCount(city);
+                            return (
+                                <button
+                                    key={city}
+                                    onClick={() => setActiveTrayCity(city)}
+className={`py-2 px-4 rounded-lg text-xs font-bold uppercase transition-all border flex items-center gap-2
+  ${activeTrayCity === city
+    ? (isDarkMode
+      ? `bg-[#ff9f43]/40 text-white border-amber-300/70
+         shadow-[0_14px_18px_-14px_rgba(245,158,11,0.65)]
+         ring-1 ring-white/20 -translate-y-[1px]`
+      : `bg-amber-100 text-amber-900 border-amber-300
+         shadow-[0_12px_16px_-14px_rgba(245,158,11,0.30)]
+         ring-1 ring-amber-200 -translate-y-[1px]`)
+    : (isDarkMode
+        ? 'bg-[#1A202C] text-gray-400 border-gray-600 hover:border-amber-500'
+        : 'bg-white text-gray-500 border-gray-200 hover:border-amber-300')
+  }
+
+  ${
+    // ✅ destaque clean quando tem itens e NÃO está selecionado
+    count > 0 && activeTrayCity !== city
+      ? (isDarkMode
+          ? 'border-amber-400/50 shadow-[0_8px_10px_-10px_rgba(245,158,11,0.55)]'
+          : 'border-amber-300 shadow-[0_8px_10px_-10px_rgba(245,158,11,0.25)]')
+      : ''
+  }
+
+  ${
+    // ✅ micro lift no hover (bem discreto)
+    count > 0 && activeTrayCity !== city
+      ? 'hover:-translate-y-[1px] hover:shadow-[0_10px_12px_-12px_rgba(245,158,11,0.45)]'
+      : ''
+  }
+`}
+                                >
+                                  {/* Indicador de Itens Pendentes, Notificação */}
+                                    {count > 0 && activeTrayCity !== city && (
+                                    <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-amber-500 shadow-sm" />
+                                    )}
+                                    {city}
+                                    <span
+                                        className={`text-[9px] px-1.5 py-0.5 rounded-full shadow-[0_8px_10px_-10px_rgba(0,0,0,0.35)]
+                                        ${activeTrayCity === city ? 'bg-black/30 text-white' : 'bg-gray-300 text-gray-600'}`}
+                                    >
+                                     {count}
+                                    </span>
+                                </button>
+                            );
+                        })}
+                    </div>
+                )}
+               </div>
+
+            {/* NÍVEL 3: GRID DE DADOS COM REORDENAÇÃO DRAG & DROP */}
+            {activeTrayCity && (
+                <div className={`w-full rounded-xl shadow-md overflow-hidden border ${isDarkMode ? 'border-gray-700 bg-[#2D3748]' : 'border-gray-200 bg-white'}`}>
+                    <div className="p-4 bg-amber-500 text-white font-black uppercase flex justify-between items-center">
+                        <span><i className="fas fa-list mr-2"></i> {activeTrayCity}</span>
+                        <span className="text-xs bg-black bg-opacity-20 px-2 py-1 rounded">
+                            {trayItems.filter(t => t.city === activeTrayCity).length} Itens
+                        </span>
+                    </div>
+
+                    {/* Titulos da lista de ordens na bandeja */}
+                    <div className="overflow-x-auto">
+                        <table className="w-full table-fixed text-left border-collapse min-w-[1406px]">
+  <colgroup>
+    <col className="w-[150px]" /> {/* DATA */}
+    <col className="w-[360px]" /> {/* NOME / RAZÃO SOCIAL */}
+    <col className="w-[190px]" /> {/* STATUS */}
+    <col className="w-[200px]" /> {/* EQUIPAMENTO */}
+    <col className="w-[240px]" /> {/* OBSERVAÇÃO */}
+    <col className="w-[170px]" /> {/* ATENDENTE */}
+    <col className="w-[96px]" />  {/* AÇÕES */}
+  </colgroup>
+
+  <thead>
+    <tr className={`text-[10px] uppercase font-black tracking-wider ${isDarkMode ? 'bg-[#1A202C] text-gray-400' : 'bg-gray-50 text-gray-500'}`}>
+      <th className="p-3 border-b border-gray-600">Data</th>
+      <th className="p-3 border-b border-gray-600">Nome / Razão Social</th>
+      <th className="p-3 border-b border-gray-600">Status</th>
+      <th className="p-3 border-b border-gray-600">Equipamento</th>
+      <th className="p-3 border-b border-gray-600">Observação</th>
+      <th className="p-3 border-b border-gray-600">Atendente</th>
+      <th className="p-3 border-b border-gray-600 text-center">Ações</th>
+    </tr>
+  </thead>
+
+                            <tbody>
+                                {trayItems.filter(t => t.city === activeTrayCity).map((item, index, arr) => (
+                               <tr
+  key={item.id}
+  draggable
+  onDragStart={(e) => handleDragStart(e, item.id)}
+  onDragEnter={() => handleDragEnterRow(item.id)}
+  onDragLeave={(e) => handleDragLeaveRow(e, item.id)}
+  onDragOver={(e) => handleDragOver(e, item.id)}
+  onDrop={(e) => handleDrop(e, item.id)}
+  onDragEnd={handleDragEnd}
+  style={
+    dragOverId === item.id && dropPosition
+      ? {
+          boxShadow:
+            dropPosition === 'above'
+              ? 'inset 0 2px 0 rgba(245,158,11,0.95)'
+              : 'inset 0 -2px 0 rgba(245,158,11,0.95)',
+        }
+      : undefined
+  }
+                                            className={`
+                                                         group border-b transition-colors
+                                         ${draggedItemId === item.id ? 'opacity-50' : ''}
+                                         ${index % 2 === 1
+                                         ? (isDarkMode ? 'bg-white/[0.025]' : 'bg-gray-50/40')
+                                           : ''
+                                          }
+                                        ${isDarkMode ? 'border-gray-700 hover:bg-white/[0.06]' : 'border-gray-100 hover:bg-gray-100'}
+                                        `}
+                                        >
+                                        
+<td className="relative p-2 pl-4 align-middle whitespace-nowrap">
+  {/* Barra lateral da linha (hover/drag) */}
+  <span
+    className={`
+      absolute left-0 top-0 bottom-0 w-[3px] rounded-r transition-colors
+      ${dragOverId === item.id ? 'bg-amber-400/90' : 'bg-transparent group-hover:bg-amber-400/70'}
+    `}
+  />
+
+  {/* Wrapper do date: mantém o ícone alinhado sem “quebrar” a coluna */}
+  <div className="relative w-[148px] sm:w-[140px]">
+    <input
+      type="date"
+      value={item.date}
+      onChange={(e) => updateTrayField(item.id, "date", e.target.value)}
+      onClick={(e) => (e.currentTarget as any).showPicker?.()} // Chrome: abre o calendário ao clicar no input
+      className={`
+        w-full h-9 px-3 pr-9 rounded-md text-xs font-black
+        outline-none focus:ring-1 focus:ring-amber-400
+        text-left tabular-nums tracking-normal
+        ${
+          isDarkMode
+            ? 'bg-white/5 text-white border border-white/10'
+            : 'bg-gray-100 text-gray-800 border border-gray-200'
+        }
+
+        /*
+          IMPORTANTE:
+          - NÃO use tracking-wide em input[type=date], pois o Chrome pode “rolar”
+            o texto interno ao trocar a data e cortar o primeiro dígito.
+          - O tracking-normal + tabular-nums estabiliza a renderização.
+        */
+
+        /* Esconde o ícone nativo (mantém o picker funcionando ao clicar no input) */
+        [&::-webkit-calendar-picker-indicator]:opacity-0
+        [&::-webkit-calendar-picker-indicator]:cursor-pointer
+      `}
+    />
+
+    {/* Ícone “nosso” (sempre visível e clicável) Calendário */}
+    <button
+      type="button"
+      onClick={(e) => {
+        const input = e.currentTarget.previousElementSibling as HTMLInputElement | null;
+        input?.focus();
+        (input as any)?.showPicker?.(); // Chrome
+      }}
+      className={`
+        absolute right-2 top-1/2 -translate-y-1/2
+        p-0.5 rounded transition
+        ${
+          isDarkMode
+            ? 'text-white/70 hover:text-white hover:bg-white/10'
+            : 'text-gray-500 hover:text-gray-700 hover:bg-black/5'
+        }
+      `}
+      title="Selecionar data"
+      aria-label="Selecionar data"
+    >
+      <i className="far fa-calendar-alt" />
+    </button>
+  </div>
+</td>
+
+                                        <td className="p-2">
+                                            <input 
+                                                type="text" 
+                                                value={item.clientName} 
+                                                placeholder="Nome do Cliente"
+                                                onChange={(e) => updateTrayField(item.id, "clientName", e.target.value)}
+                                                className={`w-full p-2 rounded border text-xs font-bold uppercase focus:ring-1 focus:ring-amber-400 outline-none ${themeInput}`}
+                                            />
+                                        </td>
+                                        <td className="p-2">
+                                            <select 
+                                                value={item.status} 
+                                                onChange={(e) => updateTrayField(item.id, "status", e.target.value)}
+                                                className={`w-full p-2 rounded border text-[10px] font-bold uppercase focus:ring-1 focus:ring-amber-400 outline-none ${themeInput}`}
+                                            >
+                                                {TRAY_STATUS_OPTIONS.map(opt => <option key={opt} value={opt} className={isDarkMode ? 'bg-[#4A5568]' : ''}>{opt || "Selecione..."}</option>)}
+                                            </select>
+                                        </td>
+                                        <td className="p-2">
+                                            <select 
+                                                value={item.equipment} 
+                                                onChange={(e) => updateTrayField(item.id, "equipment", e.target.value)}
+                                                className={`w-full p-2 rounded border text-[10px] font-bold uppercase focus:ring-1 focus:ring-amber-400 outline-none ${themeInput}`}
+                                            >
+                                                {TRAY_EQUIPMENT_OPTIONS.map(opt => <option key={opt} value={opt} className={isDarkMode ? 'bg-[#4A5568]' : ''}>{opt || "Nenhum"}</option>)}
+                                            </select>
+                                        </td>
+                                        <td className="p-2">
+                                            <input 
+                                                type="text" 
+                                                value={item.observation} 
+                                                placeholder="Obs..."
+                                                onChange={(e) => updateTrayField(item.id, "observation", e.target.value)}
+                                                className={`w-full p-2 rounded border text-xs font-medium focus:ring-1 focus:ring-amber-400 outline-none ${themeInput}`}
+                                            />
+                                        </td>
+                                        <td className="p-2">
+                                            <select 
+                                                value={item.attendant} 
+                                                onChange={(e) => updateTrayField(item.id, "attendant", e.target.value)}
+                                                className={`w-full p-2 rounded border text-[10px] font-bold uppercase focus:ring-1 focus:ring-amber-400 outline-none ${themeInput}`}
+                                            >
+                                                {ATTENDANTS.map(opt => <option key={opt} value={opt} className={isDarkMode ? 'bg-[#4A5568]' : ''}>{opt || "Selecione"}</option>)}
+                                            </select>
+                                        </td>
+                                        {/* Ícone exclusivo para Arraste */}
+                                        <td className="p-2 text-center align-middle">
+                                         <div className={`inline-flex items-center justify-center gap-2 rounded-md px-2 py-1
+                                              ${isDarkMode ? 'bg-white/0 group-hover:bg-white/5' : 'bg-transparent group-hover:bg-black/5'}
+                                                            transition-colors
+                                          `}>
+                                        <div
+                                            draggable
+                                            onDragStart={(e) => handleDragStart(e, item.id)}
+                                            className="cursor-grab active:cursor-grabbing text-gray-400 hover:text-amber-500 p-2 drag-handle"
+                                            title="Arrastar para reordenar"
+                                            >
+                                         <i className="fas fa-grip-vertical"></i>
+                                         </div>
+
+                                         <button
+                                          onClick={() => deleteTrayItem(item.id)}
+                                          className="text-red-400 hover:text-red-600 transition-colors p-2"
+                                          title="Remover"
+                                            >
+                                        <i className="fas fa-trash"></i>
+                                            </button>
+                                           </div>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                                          <button
+                                          type="button"
+                                         onClick={addTrayRow}
+                                        className={`w-full py-3 text-center text-xs font-black uppercase hover:bg-amber-50 transition-colors border-t border-dashed ${isDarkMode ? 'border-gray-600 hover:bg-[#4A5568] text-amber-400' : 'border-gray-200 text-amber-600'}`}
+                                          >
+                                      <i className="fas fa-plus mr-1"></i> Adicionar Nova Linha
+                                    </button>
+                    </div>
+                </div>
+            )}
           </div>
         ) : (
 

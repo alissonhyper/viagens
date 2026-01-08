@@ -9,10 +9,22 @@ export interface Client {
   status: string;
 }
 
-export interface CityData {
+export interface City {
   enabled: boolean;
   name: string;
   clients: Client[];
+}
+
+export interface Materials {
+  onus: MaterialItem[];
+  onts: MaterialItem[];
+  routers: MaterialItem[];
+  connectorApc: number;
+  connectorUpc: number;
+  note: string;
+  key: boolean;
+  fuelNote: boolean;
+  lunch: string;
 }
 
 export interface AppState {
@@ -21,18 +33,14 @@ export interface AppState {
   technician: string;
   assistant: string;
   services: string[];
-  materials: {
-    onus: MaterialItem[];
-    onts: MaterialItem[];
-    routers: MaterialItem[];
-    connectorApc: number;
-    connectorUpc: number;
-    note: string;
-    key: boolean;
-    fuelNote: boolean;
-    lunch: string;
-  };
-  cities: CityData[];
+  materials: Materials;
+  equipment?: string; 
+  cities: City[];
+  id?: string;
+  id_viagem?: string;
+  observations?: string;
+  clientName?: string;
+  atendente?: string;
 }
 
 export type FeedbackStatus = 'REALIZADO' | 'NAO_REALIZADO' | 'AUSENTE';
@@ -41,12 +49,21 @@ export interface EncerramentoFeedback {
   clientId: string;
   status: FeedbackStatus;
   attendantName?: string;
+
+  // NOVOS (para ligar o encerramento à bandeja)
+  cityName: string;
+  trayItemId?: string;
 }
 
-export interface SavedTrip {
+export interface TrayItem {
   id: string;
-  title: string;
-  timestamp: number;
-  state: AppState;
-  feedbacks?: EncerramentoFeedback[];
+  region: string;
+  city: string;
+  date: string;
+  clientName: string;
+  status: string;
+  equipment: string;
+  observation: string;
+  attendant: string;
+  trayOrder?: number;
 }
