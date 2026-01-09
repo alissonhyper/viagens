@@ -30,6 +30,8 @@ app = app as any;
 // Initialize Firestore (Banco de Dados)
 export const db = firebase.firestore();
 
+db.settings({ ignoreUndefinedProperties: true });
+
 // Initialize Autenticação
 export const auth = firebase.auth();
 auth.languageCode = 'pt-BR';

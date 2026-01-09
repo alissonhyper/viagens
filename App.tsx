@@ -34,6 +34,16 @@ const ATTENDANTS = ['', 'Alisson', 'Welvister', 'Uriel', 'Pedro', 'João', 'Will
 
 const ITEMS_PER_PAGE = 10;
 
+const TRAY_COLS = [
+  { key: 'DATA', className: 'w-[150px]' },
+  { key: 'NOME / RAZÃO SOCIAL', className: 'w-[360px]' },
+  { key: 'STATUS', className: 'w-[190px]' },
+  { key: 'EQUIPAMENTO', className: 'w-[200px]' },
+  { key: 'OBSERVAÇÃO', className: 'w-[240px]' },
+  { key: 'ATENDENTE', className: 'w-[170px]' },
+  { key: 'AÇÕES', className: 'w-[96px]' },
+] as const;
+
 // --- COMPONENTE MODAL DE RELATÓRIO ---
 const gerarTextoRelatorio = (viagem: Viagem): string => {
   const { state, feedbacks } = viagem;
@@ -1794,30 +1804,28 @@ className={`py-2 px-4 rounded-lg text-xs font-bold uppercase transition-all bord
                         </span>
                     </div>
 
-                    {/* Titulos da lista de ordens na bandeja */}
-                    <div className="overflow-x-auto">
-                        <table className="w-full table-fixed text-left border-collapse min-w-[1406px]">
-  <colgroup>
-    <col className="w-[150px]" /> {/* DATA */}
-    <col className="w-[360px]" /> {/* NOME / RAZÃO SOCIAL */}
-    <col className="w-[190px]" /> {/* STATUS */}
-    <col className="w-[200px]" /> {/* EQUIPAMENTO */}
-    <col className="w-[240px]" /> {/* OBSERVAÇÃO */}
-    <col className="w-[170px]" /> {/* ATENDENTE */}
-    <col className="w-[96px]" />  {/* AÇÕES */}
-  </colgroup>
+                   {/* Titulos da lista de ordens na bandeja */}
+<div className="overflow-x-auto">
+  <table className="w-full table-fixed text-left border-collapse min-w-[1406px]">
 
-  <thead>
-    <tr className={`text-[10px] uppercase font-black tracking-wider ${isDarkMode ? 'bg-[#1A202C] text-gray-400' : 'bg-gray-50 text-gray-500'}`}>
-      <th className="p-3 border-b border-gray-600">Data</th>
-      <th className="p-3 border-b border-gray-600">Nome / Razão Social</th>
-      <th className="p-3 border-b border-gray-600">Status</th>
-      <th className="p-3 border-b border-gray-600">Equipamento</th>
-      <th className="p-3 border-b border-gray-600">Observação</th>
-      <th className="p-3 border-b border-gray-600">Atendente</th>
-      <th className="p-3 border-b border-gray-600 text-center">Ações</th>
-    </tr>
-  </thead>
+    <colgroup>
+      {TRAY_COLS.map((c) => (
+        <col key={c.key} className={c.className} />
+      ))}
+    </colgroup>
+
+    <thead>
+      <tr className={`text-[10px] uppercase font-black tracking-wider ${isDarkMode ? 'bg-[#1A202C] text-gray-400' : 'bg-gray-50 text-gray-500'}`}>
+        <th className="p-3 border-b border-gray-600">Data</th>
+        <th className="p-3 border-b border-gray-600">Nome / Razão Social</th>
+        <th className="p-3 border-b border-gray-600">Status</th>
+        <th className="p-3 border-b border-gray-600">Equipamento</th>
+        <th className="p-3 border-b border-gray-600">Observação</th>
+        <th className="p-3 border-b border-gray-600">Atendente</th>
+        <th className="p-3 border-b border-gray-600 text-center">Ações</th>
+      </tr>
+    </thead>
+
 
                             <tbody>
                                 {trayItems.filter(t => t.city === activeTrayCity).map((item, index, arr) => (

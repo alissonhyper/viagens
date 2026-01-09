@@ -50,6 +50,61 @@ export interface ViagemUpdatePayload {
     // Adicione aqui qualquer outra propriedade que você possa atualizar
 }
 
+function findUndefinedPaths(obj: any, path = 'root'): string[] {
+  const out: string[] = [];
+
+  if (obj === undefined) return [path];
+  if (obj === null) return out;
+
+  if (Array.isArray(obj)) {
+    obj.forEach((v, i) => out.push(...findUndefinedPaths(v, `${path}[${i}]`)));
+    return out;
+  }
+
+  if (typeof obj === 'object') {
+    // só entra em objetos puros
+    const proto = Object.getPrototypeOf(obj);
+    const isPlain = proto === Object.prototype || proto === null;
+    if (!isPlain) return out;
+
+    Object.keys(obj).forEach((k) => {
+      out.push(...findUndefinedPaths(obj[k], `${path}.${k}`));
+    });
+  }
+
+  return out;
+}
+
+const isPlainObject = (v: any) => {
+  if (!v || typeof v !== 'object') return false;
+  const proto = Object.getPrototypeOf(v);
+  return proto === Object.prototype || proto === null;
+};
+
+const removeUndefinedDeep = (value: any): any => {
+  if (value === undefined) return undefined;
+
+  if (Array.isArray(value)) {
+    return value.map(removeUndefinedDeep).filter((v) => v !== undefined);
+  }
+
+  // Só limpa objetos "puros"
+  if (isPlainObject(value)) {
+    const out: any = {};
+    for (const [k, v] of Object.entries(value)) {
+      if (v === undefined) continue;
+      const cleaned = removeUndefinedDeep(v);
+      if (cleaned !== undefined) out[k] = cleaned;
+    }
+    return out;
+  }
+
+  // Mantém FieldValue/Timestamp/Date/DocumentReference etc.
+  return value;
+};
+
+
+
 export const firestoreService = { 
 
   // 1. BUSCAR TODAS AS VIAGENS (COLABORATIVO)
@@ -97,18 +152,30 @@ addViagem: async (viagemData: ViagemUpdatePayload) => {
     };
     
     const viagensRef = db.collection('viagens');
-    
-    // 3. Adiciona e retorna a referência
-    const docRef = await viagensRef.add(novaViagem);
-    return docRef;
+
+    // (A) Detecta e mostra onde está vindo undefined
+const novaViagemClean = removeUndefinedDeep(novaViagem);
+
+const undef = findUndefinedPaths(novaViagemClean);
+if (undef.length) console.warn('addViagem: ainda tem undefined depois da limpeza:', undef);
+
+const docRef = await viagensRef.add(novaViagemClean);
+return docRef;
 },
   
     // 3. ATUALIZAR UMA VIAGEM EXISTENTE
     // Usamos o novo tipo 'ViagemUpdatePayload' para resolver o erro.
 updateViagem: async (id: string, updates: ViagemUpdatePayload) => {
-        const viagensRef = db.collection('viagens').doc(id);
-        await viagensRef.update(updates);
-    },
+  const viagensRef = db.collection('viagens').doc(id);
+
+  const updatesClean = removeUndefinedDeep(updates);
+
+  const undef = findUndefinedPaths(updatesClean);
+  if (undef.length) console.warn('updateViagem: ainda tem undefined:', undef);
+
+  await viagensRef.update(updatesClean);
+},
+
 
     // 4. DELETAR UMA VIAGEM (Para o botão da lixeira)
 deleteViagem: async (id: string) => {
@@ -127,4 +194,3 @@ atualizarOrdemViagensCompat: async (viagens: { id: string }[]) => {
 
   await batch.commit();
 }}
-
