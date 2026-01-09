@@ -1301,24 +1301,54 @@ const concluirViagemHistorico = async (viagem: Viagem) => {
       <i className="fas fa-history"></i> Histórico
     </button>
   )}
-
-
-        {/* Admin só para ADMIN */}
-  {can('admin') && (
-    <button
-      onClick={() => setActiveTab('admin')}
-      className={`py-3 px-4 rounded-md font-bold text-sm uppercase transition-all flex items-center justify-center gap-2 mx-1 ${
-        activeTab === 'admin'
-          ? 'bg-blue-600 text-white shadow-lg flex-[2]'
-          : `flex-1 ${isDarkMode ? 'text-gray-400 hover:bg-[#4A5568]' : 'text-gray-500 hover:bg-gray-50'}`
-      }`}
-      title="Administração"
-    >
-      <i className="fas fa-user-cog"></i> Admin
-    </button>
-  )}
-
         </nav>
+
+   {/* Admin só para ADMIN - MEU BOTÃO SUPERIOR DIREITO DO ADMIN */}
+
+        {can('admin') && (
+  <button
+    onClick={() => setActiveTab('admin')}
+    title="Administração"
+    aria-label="Administração"
+    className={`
+      fixed right-4 top-[-8px] z-50
+      h-9 w-9
+      rounded-l-xl rounded-r-none
+      flex items-center justify-center
+      border shadow-lg
+      backdrop-blur-md
+      transition-all duration-200
+      ${activeTab === 'admin'
+        ? `
+          bg-blue-600/85 text-white
+          border-blue-300/40
+          shadow-blue-500/20
+        `
+        : (isDarkMode
+            ? `
+              bg-white/5 text-white/80
+              border-white/10
+              hover:bg-white/10 hover:text-white
+              shadow-black/30
+            `
+            : `
+              bg-black/5 text-gray-800
+              border-black/10
+              hover:bg-black/8
+              shadow-black/10
+            `
+          )
+      }
+      hover:scale-[1.03]
+      active:scale-[0.98]
+
+      hover:ring-2 hover:ring-white/10
+      hover:ring-black/10
+    `}
+  >
+    <i className="fas fa-user-cog text-[16px]"></i>
+  </button>
+)}
 
         {activeTab === 'form' ? (
           <div className="space-y-6 animate-in fade-in duration-300">
@@ -1657,7 +1687,7 @@ const concluirViagemHistorico = async (viagem: Viagem) => {
 
 ) : activeTab === 'admin' ? (
   can('admin') ? (
-    <AdminUsersScreen />
+    <AdminUsersScreen isDarkMode={isDarkMode} />
   ) : (
     <div className="p-4 rounded-lg border border-red-200 bg-red-50 text-red-700">
       Você não tem permissão para acessar o Admin.

@@ -37,11 +37,23 @@ function fromAccessProfile(profile: AccessProfile): PermissionKey[] {
   }
 }
 
-export const AdminUsersScreen: React.FC = () => {
+type AdminUsersScreenProps = {
+  isDarkMode: boolean;
+};
+
+export const AdminUsersScreen: React.FC<AdminUsersScreenProps> = ({ isDarkMode }) => {
   const { isAdmin, currentUser } = useAuth();
   const [loading, setLoading] = useState(true);
   const [users, setUsers] = useState<UserRow[]>([]);
   const [error, setError] = useState('');
+
+  // ✅ Theme igual ao seu app
+  const themeCard = isDarkMode ? 'bg-[#2D3748] border-gray-600' : 'bg-white border-gray-200';
+  const themeSubCard = isDarkMode ? 'bg-[#1A202C] border-gray-600' : 'bg-gray-50 border-gray-200';
+  const themeInput = isDarkMode
+    ? 'bg-[#4A5568] border-gray-600 text-white placeholder:text-gray-300'
+    : 'bg-white border-gray-300 text-gray-900 placeholder:text-gray-500';
+  const themeLabel = isDarkMode ? 'text-gray-300' : 'text-gray-600';
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -91,7 +103,7 @@ export const AdminUsersScreen: React.FC = () => {
     if (!isAdmin) {
       return (
         <div className="p-6">
-          <div className="rounded-xl border border-white/10 bg-white/5 p-4 text-white/80">
+          <div className={`rounded-xl border p-4 ${themeCard} ${themeLabel}`}>
             Você não tem permissão para acessar esta área.
           </div>
         </div>
@@ -99,104 +111,145 @@ export const AdminUsersScreen: React.FC = () => {
     }
 
     if (loading) {
-      return <div className="p-6 text-white/70">Carregando usuários…</div>;
+      return <div className={`p-6 ${themeLabel}`}>Carregando usuários…</div>;
     }
 
     return (
       <div className="p-6 space-y-4">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h2 className="text-xl font-extrabold text-white">Administração de usuários</h2>
-            <p className="text-sm text-white/60">
-              Ajuste quais abas cada usuário pode acessar.
-            </p>
+            <h2 className={`text-xl font-extrabold ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
+              Administração de usuários
+            </h2>
+            <p className={`text-sm ${themeLabel}`}>Ajuste quais abas cada usuário pode acessar.</p>
           </div>
         </div>
 
         {error && (
-          <div className="rounded-xl border border-red-400/25 bg-red-600/10 text-red-200 px-4 py-3">
+          <div
+            className={`rounded-xl border px-4 py-3 ${
+              isDarkMode
+                ? 'border-red-400/30 bg-red-600/10 text-red-200'
+                : 'border-red-200 bg-red-50 text-red-700'
+            }`}
+          >
             {error}
           </div>
         )}
 
-        <div className="overflow-hidden rounded-xl border border-white/10">
-          <table className="w-full text-sm table-fixed">
-            <colgroup>
-              <col className="w-[44%]" />
-              <col className="w-[22%]" />
-              <col className="w-[22%]" />
-              <col className="w-[12%]" />
-            </colgroup>
+        <div className={`overflow-hidden rounded-xl border ${themeCard}`}>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm table-fixed min-w-[760px]">
+              <colgroup>
+  <col className="w-[46%]" />
+  <col className="w-[26%]" />
+  <col className="w-[18%]" />
+  <col className="w-[10%]" />
+              </colgroup>
 
-            <thead className="bg-white/5 text-white/70">
-              <tr>
-                <th className="text-left px-4 py-3 font-bold">E-mail</th>
-                <th className="text-left px-4 py-3 font-bold">Perfil</th>
-                <th className="text-left px-4 py-3 font-bold">Permissões</th>
-                <th className="text-center px-4 py-3 font-bold">Ativo</th>
-              </tr>
-            </thead>
+              <thead className={`${themeSubCard}`}>
+                <tr>
+                  <th className={`text-left px-4 py-3 font-black uppercase text-[11px] tracking-wider ${themeLabel}`}>
+                    E-mail
+                  </th>
+                  <th className={`text-left px-4 py-3 font-black uppercase text-[11px] tracking-wider ${themeLabel}`}>
+                    Perfil
+                  </th>
+                  <th className={`text-left px-4 py-3 font-black uppercase text-[11px] tracking-wider ${themeLabel}`}>
+                    Permissões
+                  </th>
+                  <th className={`text-center px-2 py-3 font-black uppercase text-[11px] tracking-wider ${themeLabel}`}>
+                    Ativo
+                  </th>
+                </tr>
+              </thead>
 
-            <tbody className="bg-black/10">
-              {users.map((u) => {
-                const profile = toAccessProfile(u.permissions);
-                
-                const isMe = currentUser?.uid === u.uid; 
+              <tbody className={`${isDarkMode ? 'bg-[#2D3748]' : 'bg-white'}`}>
+                {users.map((u) => {
+                  const profile = toAccessProfile(u.permissions);
 
-                return (
-                  <tr key={u.uid} className="border-t border-white/10">
-                    <td className="px-4 py-3 text-white/90 truncate">{u.email || u.uid}</td>
+                  // ✅ robusto: trava pelo uid OU email
+                  const isMe =
+                    (currentUser?.uid && currentUser.uid === u.uid) ||
+                    (currentUser?.email && u.email && currentUser.email.toLowerCase() === u.email.toLowerCase());
 
-                    <td className="px-4 py-3">
-                      <select
-  value={profile}
-  disabled={isMe}
-  onChange={(e) => {
-    if (isMe) return; // segurança extra
-    const next = e.target.value as AccessProfile;
-    updateUser(u.uid, { permissions: fromAccessProfile(next) });
-  }}
-  className={`w-full rounded-lg border px-3 py-2 outline-none
-    bg-[#1A202C] text-white border-white/10
-    ${isMe ? 'opacity-60 cursor-not-allowed' : ''}`}
->
-  <option value="TRAY" className="bg-[#1A202C] text-white">Somente Bandeja</option>
-  <option value="TRAY_HISTORY" className="bg-[#1A202C] text-white">Bandeja + Histórico</option>
-  <option value="ALL" className="bg-[#1A202C] text-white">Acesso Total (todas as abas)</option>
-  <option value="ADMIN" className="bg-[#1A202C] text-white">Administrador</option>
-</select>
+                  return (
+                    <tr
+                      key={u.uid}
+                      className={`border-t ${isDarkMode ? 'border-gray-600' : 'border-gray-200'} ${
+                        isDarkMode ? 'hover:bg-[#364152]' : 'hover:bg-gray-50'
+                      } transition-colors`}
+                    >
+                      <td className={`px-4 py-3 truncate font-semibold ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
+                        {u.email || u.uid}
+                      </td>
 
-{isMe && (
-  <div className="text-[10px] text-amber-300 mt-1 font-bold">
-    Sua conta (Sempre admin)
-  </div>
-)}
-                    </td>
+                      <td className="px-4 py-3">
+                        <select
+                          value={profile}
+                          disabled={isMe}
+                          onChange={(e) => {
+                            if (isMe) return;
+                            const next = e.target.value as AccessProfile;
+                            updateUser(u.uid, { permissions: fromAccessProfile(next) });
+                          }}
+                          className={`w-full rounded-lg border px-3 py-2 outline-none font-bold focus:ring-2 focus:ring-blue-300/30 ${themeInput} ${
+                            isMe ? 'opacity-60 cursor-not-allowed' : ''
+                          }`}
+                        >
+                          <option value="TRAY" className={isDarkMode ? 'bg-[#1A202C] text-white' : 'bg-white text-gray-900'}>
+                            Somente Bandeja
+                          </option>
+                          <option
+                            value="TRAY_HISTORY"
+                            className={isDarkMode ? 'bg-[#1A202C] text-white' : 'bg-white text-gray-900'}
+                          >
+                            Bandeja + Histórico
+                          </option>
+                          <option value="ALL" className={isDarkMode ? 'bg-[#1A202C] text-white' : 'bg-white text-gray-900'}>
+                            Acesso Total (Tudo)
+                          </option>
+                          <option
+                            value="ADMIN"
+                            className={isDarkMode ? 'bg-[#1A202C] text-white' : 'bg-white text-gray-900'}
+                          >
+                            Administrador
+                          </option>
+                        </select>
 
-                    <td className="px-4 py-3 text-white/70 truncate">
-                      {u.permissions.join(', ')}
-                    </td>
+                        {isMe && (
+                          <div className={`text-[10px] mt-1 font-black ${isDarkMode ? 'text-amber-300' : 'text-amber-600'}`}>
+                            Sua conta (Sempre admin)
+                          </div>
+                        )}
+                      </td>
 
-                    <td className="px-4 py-3 text-center">
-                      <input
-  type="checkbox"
-  checked={u.active}
-  disabled={isMe}
-  onChange={(e) => {
-    if (isMe) return; // segurança extra
-    updateUser(u.uid, { active: e.target.checked });
-  }}
-/>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                      <td className={`px-4 py-3 truncate ${themeLabel} font-semibold`}>
+                        {u.permissions.join(', ')}
+                      </td>
+
+                      <td className="px-2 py-3 text-center">
+                        <input
+                          type="checkbox"
+                          checked={u.active}
+                          disabled={isMe}
+                          onChange={(e) => {
+                            if (isMe) return;
+                            updateUser(u.uid, { active: e.target.checked });
+                          }}
+                          className="h-4 w-4"
+                        />
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     );
-  }, [error, isAdmin, loading, users, currentUser]);
+  }, [error, isAdmin, loading, users, currentUser, isDarkMode, themeCard, themeInput, themeLabel, themeSubCard]);
 
   return <div className="min-h-screen">{content}</div>;
 };
