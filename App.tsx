@@ -26,11 +26,12 @@ import { trayService } from './src/trayService';
 import { auth } from './firebaseConfig';
 import { AdminUsersScreen } from './src/screens/AdminUsersScreen';
 
-
+import { doc, onSnapshot } from "firebase/firestore";
+import { db } from "./firebaseConfig"; 
 
 
 // Lista de atendentes autorizados para o fechamento
-const ATTENDANTS = ['', 'Alisson', 'Welvister', 'Uriel', 'Pedro', 'João', 'Willians', 'Keven', 'Amile', 'Rayssa'];
+const ATTENDANTS = ['', 'Alisson', 'Welvister', 'Uriel', 'Pedro', 'João', 'Willians', 'Keven', 'Amile', 'Rayssa', 'Hévila'];
 
 const ITEMS_PER_PAGE = 10;
 
@@ -210,6 +211,49 @@ useEffect(() => {
 }, [currentUser]);
 
 
+// APPUSERS (PERMISSÕES) EM TEMPO REAL
+useEffect(() => {
+  if (!currentUser?.uid) {
+    setUserData(null);
+    return;
+  }
+
+  const ref = doc(db, "appUsers", currentUser.uid);
+
+  const unsub = onSnapshot(
+    ref,
+    (snap) => {
+      if (snap.exists()) {
+        const d = snap.data() as Partial<AppUserDoc>;
+
+        setUserData({
+          active: !!d.active,
+          permissions: Array.isArray(d.permissions) ? d.permissions : [],
+          name: (d.name ?? currentUser.displayName ?? "").toString(),
+        });
+      } else {
+        // Doc não existe ainda → default seguro
+        setUserData({
+          active: true,
+          permissions: [],
+          name: (currentUser.displayName ?? "").toString(),
+        });
+      }
+    },
+    (err) => {
+      console.error("Erro onSnapshot appUsers:", err);
+      setUserData({
+        active: true,
+        permissions: [],
+        name: (currentUser.displayName ?? "").toString(),
+      });
+    }
+  );
+
+  return () => unsub();
+}, [currentUser?.uid]);
+
+
 
   // --- TRAY STATE (BANDEJA) ---
   const [trayItems, setTrayItems] = useState<TrayItem[]>([]);
@@ -220,7 +264,136 @@ useEffect(() => {
   // Estado para armazenar o ID do item sendo arrastado
   const [draggedItemId, setDraggedItemId] = useState<string | null>(null);
 
+  
 
+// --- Importar Mensagem (Bandeja) ---
+const [isImportOpen, setIsImportOpen] = useState(false);
+const [importText, setImportText] = useState("");
+const [importPreview, setImportPreview] = useState<null | {
+  date: string;
+  clientName: string;
+  status: string;
+  attendant: string;
+  city: string;
+  warnings: string[];
+}>(null);
+
+type AppUserDoc = {
+  active: boolean;
+  permissions: string[];
+  name?: string;
+};
+const [userData, setUserData] = useState<AppUserDoc | null>(null);
+// Permissão (ajuste o nome como preferir)
+const permissions = userData?.permissions ?? [];
+const canImportStandardForm =
+  permissions.includes("admin") ||
+  permissions.includes("all") ||
+  permissions.includes("trayImport");
+
+const todayISO = () => {
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+};
+
+const normalizeLines = (raw: string) =>
+  raw
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .map(l => l.trim())
+    .filter(Boolean);
+
+const pickFirstNonKeyLineAsName = (lines: string[]) => {
+  // pega a primeira linha que não parece "CHAVE: valor"
+  const keyLike = /^[A-ZÁÉÍÓÚÂÊÎÔÛÃÕÇ0-9 _.-]+:\s*/i;
+  const line = lines.find(l => !keyLike.test(l));
+  return line?.trim() || "";
+};
+
+const getValueAfterKey = (lines: string[], key: string) => {
+  // ex: "ATENDENTE: ALISSON"
+  const re = new RegExp(`^\\s*${key}\\s*:\\s*(.+)\\s*$`, "i");
+  const line = lines.find(l => re.test(l));
+  return line ? line.replace(re, "$1").trim() : "";
+};
+const getStatus = (lines: string[]) => {
+  const statusLineRe = /^\s*(STATUS(?:\s+DA\s+ORDEM)?|SOLICITAÇÃO)\s*:\s*(.*)\s*$/i;
+  const cutOtherKeysRe = /\s+(CLIENTE|CIDADE|LOGIN|PLANO|ATENDENTE|ORDEM|OS|COD)\s*:\s*/i;
+  const stopRe = /^\s*(CLIENTE|CIDADE|LOGIN|PLANO|ATENDENTE|ORDEM|OS|COD|STATUS|SOLICITAÇÃO)\s*:/i;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const m = line.match(statusLineRe);
+    if (!m) continue;
+
+    let value = (m[2] || "").trim();
+
+    // 1) Mesma linha
+    if (value) {
+      value = value.split(cutOtherKeysRe)[0].trim();
+      return value;
+    }
+
+    // 2) Próximas linhas
+    for (let j = i + 1; j < lines.length; j++) {
+      const next = (lines[j] || "").trim();
+      if (!next) continue;
+      if (stopRe.test(next)) break;
+      return next;
+    }
+
+    return "";
+  }
+
+  return "";
+};
+
+const parseStandardMessageForTray = (raw: string) => {
+  const warnings: string[] = [];
+  const lines = normalizeLines(raw);
+
+  const clientFromKey = getValueAfterKey(lines, "CLIENTE");
+  const clientName = clientFromKey || pickFirstNonKeyLineAsName(lines);
+
+  const cityRaw = getValueAfterKey(lines, "CIDADE");
+  const city = (cityRaw.split("-")[0] || "").trim();
+
+  const attendantFromText = getValueAfterKey(lines, "ATENDENTE");
+  const attendantFallback = (currentUser?.displayName || "").trim();
+  const attendantFinal = attendantFromText || attendantFallback;
+
+  const status = getStatus(lines);
+
+  if (!clientName) warnings.push("Nome do cliente não identificado.");
+  if (!city) warnings.push("Cidade não identificada.");
+  if (!status) warnings.push("Status não identificado.");
+
+  if (!attendantFromText && attendantFinal) {
+    warnings.push("ATENDENTE não informado; usando usuário logado.");
+  }
+  if (!attendantFinal) warnings.push("Atendente não identificado.");
+
+  return {
+    date: todayISO(),
+    clientName: (clientName || "").toUpperCase(),
+    status: (status || "").toUpperCase(),
+    attendant: (attendantFinal || "").toUpperCase(),
+    city: (city || "").toUpperCase(),
+    warnings
+  };
+};
+
+
+// opcional: navegar para a cidade automaticamente após criar
+const findRegionByCity = (city: string) => {
+  const c = (city || "").toUpperCase();
+  return Object.keys(REGIONS).find(r =>
+    REGIONS[r].some((x: string) => (x || "").toUpperCase() === c)
+  );
+};
 
   
 
@@ -234,6 +407,19 @@ useEffect(() => {
     norm(t.status) !== "REALIZADA"
   )
   .sort((a, b) => (a.trayOrder ?? 9999) - (b.trayOrder ?? 9999));
+
+
+  const importRegionFound = importPreview?.city
+  ? findRegionByCity(importPreview.city)
+  : null;
+
+const importHasBlockingErrors =
+  !importPreview?.clientName?.trim() ||
+  !importPreview?.city?.trim() ||
+  !importPreview?.status?.trim() ||
+  !importRegionFound;
+
+
 
   // Estado para destacar a linha alvo durante o drag over
   const [dragOverId, setDragOverId] = useState<string | null>(null);
@@ -1693,14 +1879,35 @@ const concluirViagemHistorico = async (viagem: Viagem) => {
       Você não tem permissão para acessar o Admin.
     </div>
   )
-
+        // TITULO BANDEJA DE VIAGENS
         ) : activeTab === 'tray' ? (
           <div className="space-y-6 animate-in fade-in duration-300">
             {/* TRAY UI HEADER - LARGURA EXPANDIDA JÁ APLICADA NO CONTAINER PAI */}
             <div className={`p-5 rounded-xl shadow-md border-l-4 border-amber-500 space-y-4 ${themeCard}`}>
-                <h2 className={`font-black flex items-center text-lg uppercase ${isDarkMode ? 'text-white' : 'text-gray-800'}`}>
-                    <i className="fas fa-inbox mr-3 text-amber-500"></i> BANDEJA DE VIAGENS
-                </h2>
+                <div className="flex items-center justify-between">
+                 <h2 className={`font-black flex items-center text-lg uppercase ${isDarkMode ? 'text-white' : 'text-gray-800'}`}>
+                  <i className="fas fa-inbox mr-3 text-amber-500"></i> BANDEJA DE VIAGENS
+                  </h2>
+
+  {/* BOTÃO ADICIONAR ORDEM */}
+  {canImportStandardForm && (
+    <button
+      type="button"
+      onClick={() => {
+  setImportText("");
+  setImportPreview(null);
+  setIsImportOpen(true);
+  }}
+      className={`text-xs font-black uppercase px-3 py-2 rounded-lg border transition
+        ${isDarkMode ? 'bg-white/5 text-amber-300 border-white/10 hover:bg-white/10' : 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100'}
+      `}
+      title="Colar mensagem padrão e gerar uma linha"
+    >
+      <i className="fas fa-paste mr-2"></i> Adicionar ordem
+    </button>
+  )}
+</div>
+
                 
                 
                 {/* NÍVEL 1: REGIÕES COM DESTAQUE CONDICIONAL */}
@@ -1771,6 +1978,8 @@ const concluirViagemHistorico = async (viagem: Viagem) => {
                     <div className="flex flex-wrap gap-2 pt-2 animate-in slide-in-from-top-2">
                         {REGIONS[activeTrayRegion].map(city => {
                             const count = getCityCount(city);
+
+                            
                             return (
                                 <button
                                     key={city}
@@ -2036,6 +2245,132 @@ className={`py-2 px-4 rounded-lg text-xs font-bold uppercase transition-all bord
                     </div>
                 </div>
             )}
+
+            {isImportOpen && (
+  <div className="fixed inset-0 z-[80] flex items-center justify-center">
+    <div
+      className="absolute inset-0 bg-black/60"
+      onClick={() => setIsImportOpen(false)}
+    />
+
+    <div className={`relative w-[95%] max-w-3xl rounded-2xl shadow-xl border p-5 ${themeCard}`}>
+      <div className="flex items-center justify-between mb-3">
+        <h3 className={`text-sm font-black uppercase ${isDarkMode ? 'text-white' : 'text-gray-800'}`}>
+          Adicionar ordem (mensagem padrão)
+        </h3>
+
+        <button
+          type="button"
+          onClick={() => setIsImportOpen(false)}
+          className={`${isDarkMode ? 'text-white/70 hover:text-white' : 'text-gray-500 hover:text-gray-800'}`}
+          title="Fechar"
+        >
+          <i className="fas fa-times"></i>
+        </button>
+      </div>
+
+      <textarea
+        value={importText}
+        onChange={(e) => setImportText(e.target.value)}
+        placeholder="Cole aqui a mensagem padrão..."
+        className={`w-full min-h-[160px] p-3 rounded-lg border text-xs font-bold outline-none ${themeInput}`}
+      />
+
+      <div className="flex gap-2 mt-3">
+        <button
+          type="button"
+          onClick={() => setImportPreview(parseStandardMessageForTray(importText))}
+          className={`px-4 py-2 rounded-lg text-xs font-black uppercase border transition
+            ${isDarkMode ? 'bg-white/5 text-white border-white/10 hover:bg-white/10' : 'bg-gray-100 text-gray-800 border-gray-200 hover:bg-gray-200'}
+          `}
+        >
+          Pré-visualizar
+        </button>
+
+            
+
+        <button
+          type="button"
+          disabled={!importPreview || importHasBlockingErrors}
+          onClick={async () => {
+            if (!importPreview) return;
+
+            const region = importRegionFound;
+if (!region) return;
+
+            const newItem = {
+              date: importPreview.date,
+              clientName: importPreview.clientName,
+              status: importPreview.status,
+              attendant: importPreview.attendant,
+              city: importPreview.city,
+              region,          // ✅ necessário para seu filtro computedTrayItems
+              equipment: "",
+              observation: "",
+            };
+
+            try {
+              await trayService.add(newItem);
+
+              if (region) setActiveTrayRegion(region);
+              setActiveTrayCity(importPreview.city);
+
+              setIsImportOpen(false);
+            } catch (err) {
+              console.error("Erro ao criar item importado:", err);
+            }
+          }}
+          className={`px-4 py-2 rounded-lg text-xs font-black uppercase border transition
+            ${
+              (!importPreview || importPreview.warnings.length > 0)
+                ? (isDarkMode ? 'bg-white/5 text-white/30 border-white/10 cursor-not-allowed' : 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed')
+                : 'bg-amber-500 text-white border-amber-300 hover:brightness-110'
+            }
+          `}
+        >
+          <i className="fas fa-check mr-2"></i> Adicionar ordem à bandeja
+          
+        </button>
+      </div>
+
+      {importPreview && (
+        <div className={`mt-4 rounded-xl border p-4 ${isDarkMode ? 'border-white/10 bg-white/5' : 'border-gray-200 bg-gray-50'}`}>
+          <div className={`text-[10px] font-black uppercase mb-2 ${isDarkMode ? 'text-white/80' : 'text-gray-600'}`}>
+            Pré-visualização
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className={`text-xs ${isDarkMode ? 'text-white' : 'text-gray-800'}`}>
+              <span className="font-black">Data:</span> {importPreview.date}
+            </div>
+            <div className={`text-xs ${isDarkMode ? 'text-white' : 'text-gray-800'}`}>
+              <span className="font-black">Cidade:</span> {importPreview.city || "-"}
+            </div>
+            <div className={`text-xs ${isDarkMode ? 'text-white' : 'text-gray-800'}`}>
+              <span className="font-black">Cliente:</span> {importPreview.clientName || "-"}
+            </div>
+            <div className={`text-xs ${isDarkMode ? 'text-white' : 'text-gray-800'}`}>
+              <span className="font-black">Atendente:</span> {importPreview.attendant || "-"}
+            </div>
+            <div className={`text-xs md:col-span-2 ${isDarkMode ? 'text-white' : 'text-gray-800'}`}>
+              <span className="font-black">Status:</span> {importPreview.status || "-"}
+            </div>
+          </div>
+
+          {importPreview.warnings.length > 0 && (
+            <div className={`mt-3 text-[11px] font-bold ${isDarkMode ? 'text-amber-200' : 'text-amber-700'}`}>
+              {importPreview.warnings.map((w, i) => (
+                <div key={i}>• {w}</div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  </div>
+)}
+
+
           </div>
         ) : (
 

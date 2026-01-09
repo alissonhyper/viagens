@@ -1,12 +1,11 @@
 import React, { useEffect, useMemo, useState, useContext } from 'react';
 import { AuthContext } from '../AuthContext';
-
+import { firestoreService, Viagem } from '../firestoreService';
 import TrayScreen from './TrayScreen';
 import { AdminUsersScreen } from './AdminUsersScreen';
 
-import { firestoreService, Viagem } from '../firestoreService';
 
-// Componente simples para exibir uma viagem (Histórico)
+// Componente simples para exibir uma viagem
 const ViagemCard: React.FC<{ viagem: Viagem }> = ({ viagem }) => (
   <div className="p-4 mb-3 border rounded shadow-md bg-white dark:bg-gray-700 dark:border-gray-600">
     <h3 className="text-xl font-bold text-gray-900 dark:text-white">{viagem.destino}</h3>
@@ -19,10 +18,34 @@ const ViagemCard: React.FC<{ viagem: Viagem }> = ({ viagem }) => (
   </div>
 );
 
+// Placeholder para Bandeja (troque depois pela sua tela real)
+const TrayPlaceholder: React.FC = () => (
+  <div className="p-4 rounded-lg border border-dashed border-gray-300 dark:border-gray-600">
+    <p className="text-gray-700 dark:text-gray-200 font-semibold">Bandeja</p>
+    <p className="text-gray-500 dark:text-gray-400 text-sm mt-1">
+      Conteúdo da bandeja entra aqui (sua tela real).
+    </p>
+  </div>
+);
+
+// Placeholder para Admin (troque depois por AdminUsersScreen)
+const AdminPlaceholder: React.FC = () => (
+  <div className="p-4 rounded-lg border border-dashed border-gray-300 dark:border-gray-600">
+    <p className="text-gray-700 dark:text-gray-200 font-semibold">Admin</p>
+    <p className="text-gray-500 dark:text-gray-400 text-sm mt-1">
+      Aqui você vai gerenciar permissões (ativar/desativar, perfis).
+    </p>
+  </div>
+);
+
 type TabKey = 'tray' | 'history' | 'admin';
 
 const DashboardScreen: React.FC = () => {
-  const { currentUser, signOut, profile, can, isAdmin } = useContext(AuthContext);
+  const authContext = useContext(AuthContext);
+
+  // Estes campos precisam existir no AuthContext atualizado:
+  // currentUser, signOut, profile, can, isAdmin
+  const { currentUser, signOut, profile, can, isAdmin } = authContext as any;
 
   const [activeTab, setActiveTab] = useState<TabKey>('tray');
 
@@ -35,11 +58,12 @@ const DashboardScreen: React.FC = () => {
     []
   );
 
-  const visibleTabs = useMemo(() => tabs.filter((t) => can(t.requires)), [tabs, can]);
+  const visibleTabs = useMemo(() => tabs.filter((t) => can?.(t.requires)), [tabs, can]);
 
   // Garante que a aba ativa sempre exista nas permitidas
   useEffect(() => {
     if (!visibleTabs.length) return;
+
     const exists = visibleTabs.some((t) => t.key === activeTab);
     if (!exists) setActiveTab(visibleTabs[0].key);
   }, [visibleTabs, activeTab]);
@@ -67,8 +91,9 @@ const DashboardScreen: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
+    // Só carrega viagens se estiver na aba Histórico e tiver permissão
     if (activeTab !== 'history') return;
-    if (!can('history')) return;
+    if (!can?.('history')) return;
 
     setIsLoading(true);
 
@@ -98,12 +123,14 @@ const DashboardScreen: React.FC = () => {
           </p>
         </div>
 
-        <button
-          onClick={signOut}
-          className="py-2 px-4 bg-red-600 text-white rounded-lg hover:bg-red-700 transition"
-        >
-          Sair
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={signOut}
+            className="py-2 px-4 bg-red-600 text-white rounded-lg hover:bg-red-700 transition"
+          >
+            Sair
+          </button>
+        </div>
       </header>
 
       {/* MENU (ABAS) */}
@@ -129,7 +156,7 @@ const DashboardScreen: React.FC = () => {
 
       {/* CONTEÚDO POR ABA */}
       {activeTab === 'tray' && (
-        can('tray') ? (
+        can?.('tray') ? (
           <TrayScreen />
         ) : (
           <div className="p-4 rounded-lg border border-red-200 bg-red-50 text-red-700">
@@ -139,7 +166,7 @@ const DashboardScreen: React.FC = () => {
       )}
 
       {activeTab === 'history' && (
-        can('history') ? (
+        can?.('history') ? (
           <div>
             <h2 className="text-2xl font-semibold mb-4 text-gray-800 dark:text-gray-100">
               Histórico Colaborativo (Viagens: {viagens.length})
@@ -167,8 +194,8 @@ const DashboardScreen: React.FC = () => {
       )}
 
       {activeTab === 'admin' && (
-        can('admin') ? (
-          <AdminUsersScreen />
+        can?.('admin') ? (
+          <AdminPlaceholder />
         ) : (
           <div className="p-4 rounded-lg border border-red-200 bg-red-50 text-red-700">
             Você não tem permissão para acessar o Admin.
