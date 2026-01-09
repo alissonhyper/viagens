@@ -1243,7 +1243,7 @@ const concluirViagemHistorico = async (viagem: Viagem) => {
           {/* Botão de Logout no canto superior esquerdo */}
           <div 
             onClick={(e) => { e.stopPropagation(); handleLogout(); }}
-            className="absolute top-4 left-4 bg-red-600 hover:bg-red-700 text-white text-xs font-bold px-3 py-1.5 rounded transition-colors flex items-center gap-2 z-10"
+            className="absolute top-4 left-4 hover:bg-red-600 text-white text-xs font-bold px-3 py-1.5 rounded transition-colors flex items-center gap-2 z-10"
           >
             <i className="fas fa-sign-out-alt"></i> SAIR
           </div>
