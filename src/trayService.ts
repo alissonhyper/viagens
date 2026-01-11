@@ -13,37 +13,46 @@ export const trayService = {
     return db
       .collection(COLLECTION)
       .orderBy("trayOrder", "asc")
-      .onSnapshot(
-        (snap) => {
-          const items: TrayItem[] = snap.docs.map((doc) => {
-            const data = doc.data() as any;
-            return {
-              id: doc.id,
-              region: data.region ?? "",
-              city: data.city ?? "",
-              date: data.date ?? "",
-              clientName: data.clientName ?? "",
-              status: data.status ?? "PENDENTE",
-              equipment: data.equipment ?? "",
-              observation: data.observation ?? "",
-              attendant: data.attendant ?? "",
-              trayOrder: typeof data.trayOrder === "number" ? data.trayOrder : 9999,
-            };
-          });
-          callback(items);
-        },
-        error
-      );
+.onSnapshot(
+  (snap) => {
+    console.log("SNAPSHOT size:", snap.size);
+    console.log("CHANGES:", snap.docChanges().map(c => ({
+      type: c.type,
+      id: c.doc.id,
+      trayOrder: (c.doc.data() as any)?.trayOrder
+    })));
+
+    const items: TrayItem[] = snap.docs.map((doc) => {
+      const data = doc.data() as any;
+      return {
+        id: doc.id,
+        region: data.region ?? "",
+        city: data.city ?? "",
+        date: data.date ?? "",
+        clientName: data.clientName ?? "",
+        status: data.status ?? "PENDENTE",
+        equipment: data.equipment ?? "",
+        observation: data.observation ?? "",
+        attendant: (data.attendant ?? "").trim().toUpperCase(),
+        trayOrder: typeof data.trayOrder === "number" ? data.trayOrder : 9999,
+      };
+    });
+
+    callback(items);
+  },
+  error
+);
   },
 
-  add: async (item: Omit<TrayItem, "id">) => {
-    const ref = await db.collection(COLLECTION).add({
-      ...item,
-      createdAt: (firebase as any).firestore.FieldValue.serverTimestamp(),
-      updatedAt: (firebase as any).firestore.FieldValue.serverTimestamp(),
-    });
-    return ref;
-  },
+add: async (item: Omit<TrayItem, "id">) => {
+  const ref = await db.collection(COLLECTION).add({
+    ...item,
+    trayOrder: typeof (item as any).trayOrder === "number" ? (item as any).trayOrder : Date.now(),
+    createdAt: (firebase as any).firestore.FieldValue.serverTimestamp(),
+    updatedAt: (firebase as any).firestore.FieldValue.serverTimestamp(),
+  });
+  return ref;
+},
 
   update: async (id: string, updates: Partial<TrayItem>) => {
     await db.collection(COLLECTION).doc(id).update({

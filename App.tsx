@@ -31,7 +31,19 @@ import { db } from "./firebaseConfig";
 
 
 // Lista de atendentes autorizados para o fechamento
-const ATTENDANTS = ['', 'Alisson', 'Welvister', 'Uriel', 'Pedro', 'João', 'Willians', 'Keven', 'Amile', 'Rayssa', 'Hévila'];
+const ATTENDANTS = [
+  '',
+  'ALISSON',
+  'WELVISTER',
+  'URIEL',
+  'PEDRO',
+  'JOÃO',
+  'WILLIANS',
+  'KEVEN',
+  'AMILE',
+  'RAYSSA',
+  'HÉVILA'
+];
 
 const ITEMS_PER_PAGE = 10;
 
@@ -83,11 +95,14 @@ const gerarTextoRelatorio = (viagem: Viagem): string => {
   const key = `${city.name}-${clIdx}`;
   const fb = fbList.find(f => f.clientId === key);
   
+
+
   const statusLabel =
     fb?.status === 'REALIZADO' ? 'REALIZADO' :
     fb?.status === 'NAO_REALIZADO' ? 'NÃO REALIZADO' :
     fb?.status === 'AUSENTE' ? 'AUSENTE' : 
     'PENDENTE';
+
 
   const obs = cl.status && cl.status.trim()
     ? ` - ${cl.status.trim().toUpperCase()}`
@@ -278,18 +293,43 @@ const [importPreview, setImportPreview] = useState<null | {
   warnings: string[];
 }>(null);
 
+// --- Documento do usuário (Firestore: appUsers/{uid}) ---
 type AppUserDoc = {
   active: boolean;
-  permissions: string[];
+  permissions: string[]; // ex.: ['tray'], ['tray','history'], ['all'], ['admin','all']
   name?: string;
 };
 const [userData, setUserData] = useState<AppUserDoc | null>(null);
-// Permissão (ajuste o nome como preferir)
+
+// --- Permissões do usuário (helper) ---
 const permissions = userData?.permissions ?? [];
+
+// --- Permissão: pode usar importação via mensagem padrão (botão "Adicionar Ordem") ---
 const canImportStandardForm =
   permissions.includes("admin") ||
   permissions.includes("all") ||
   permissions.includes("trayImport");
+
+// --- Permissão: pode acessar "Nova Programação" (bloquear para tray e tray+history) ---
+const canUseProgramming =
+  permissions.includes("admin") || permissions.includes("all");
+
+// --- Permissão: admin ou all (atalho para regras de bloqueio) ---
+const isAdminOrAll =
+  permissions.includes("admin") || permissions.includes("all");
+
+// --- Permissão: pode EDITAR / EXCLUIR no Histórico (tray+history NÃO pode) ---
+const canEditHistory = isAdminOrAll; // ✅ por enquanto: somente admin/all
+  
+
+  // FORMATO DATA BR: DD/MM/YYYY
+const formatDateBR = (iso?: string) => {
+  if (!iso) return "";
+  const [y, m, d] = iso.split("-");
+  if (!y || !m || !d) return iso;
+  return `${d}/${m}/${y}`; // BR: DD/MM/AAAA
+};
+
 
 const todayISO = () => {
   const d = new Date();
@@ -358,8 +398,34 @@ const parseStandardMessageForTray = (raw: string) => {
   const clientFromKey = getValueAfterKey(lines, "CLIENTE");
   const clientName = clientFromKey || pickFirstNonKeyLineAsName(lines);
 
-  const cityRaw = getValueAfterKey(lines, "CIDADE");
-  const city = (cityRaw.split("-")[0] || "").trim();
+  
+
+
+const normCityKey = (s?: string | null) =>
+  (s ?? "")
+    .trim()
+    .toUpperCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, ""); // remove acentos
+
+const getAllOfficialCities = () =>
+  Object.values(REGIONS).flat().filter(Boolean) as string[];
+
+const resolveOfficialCity = (inputCity: string) => {
+  const key = normCityKey(inputCity);
+  const officialCities = getAllOfficialCities();
+
+  const found = officialCities.find(c => normCityKey(c) === key);
+  return found || ""; // devolve com acento, se existir
+};
+
+
+const cityRaw = getValueAfterKey(lines, "CIDADE");
+const cityCandidate = (cityRaw.split("-")[0] || "").trim();
+
+// ✅ resolve para o nome oficial (com acento) que existe no REGIONS
+const city = resolveOfficialCity(cityCandidate) || cityCandidate;
+
 
   const attendantFromText = getValueAfterKey(lines, "ATENDENTE");
   const attendantFallback = (currentUser?.displayName || "").trim();
@@ -862,15 +928,24 @@ const handleDrop = async (
   setDragOverId(null);
 };
 
-  
-  const getRegionCount = (regionName: string) => {
-    // Conta itens que pertencem a qualquer cidade desta região
-    // As cidades são definidas em REGIONS[regionName]
-    const cities = REGIONS[regionName] || [];
-    return trayItems.filter(t => cities.includes(t.city)).length;
-  };
 
-  const getCityCount = (cityName: string) => trayItems.filter(t => t.city === cityName).length;
+const getRegionCount = (regionName: string) => {
+  const cities = REGIONS[regionName] || [];
+  const citySet = new Set(cities.map(c => norm(c)));
+
+  return trayItems.filter(t =>
+    citySet.has(norm(t.city)) &&
+    norm(t.status) !== "REALIZADA"
+  ).length;
+};
+
+const getCityCount = (cityName: string) => {
+  return trayItems.filter(t =>
+    norm(t.city) === norm(cityName) &&
+    norm(t.status) !== "REALIZADA"
+  ).length;
+};
+
 
   const updateCity = (index: number, updates: Partial<AppState['cities'][0]>) => {
     setState(prev => {
@@ -1073,6 +1148,19 @@ const carregarViagem = (viagem: Viagem) => {
     setActiveTab('form');
 };
 
+// --- Proteção extra: impedir ações de Histórico sem permissão ---
+// Observação: mesmo que o botão suma/desabilite, isso evita execução acidental por outros caminhos.
+const carregarViagemSafe = (viagem: Viagem) => {
+  if (!canEditHistory) return;
+  carregarViagem(viagem);
+};
+
+const excluirViagemSafe = async (id: string) => {
+  if (!canEditHistory) return;
+  await excluirViagem(id);
+};
+
+
 const carregarParaEncerramento = (viagem: Viagem) => {
     // 1. Preenche o formulário/estado com os dados da viagem finalizada
     setState(viagem.state); 
@@ -1086,6 +1174,7 @@ const carregarParaEncerramento = (viagem: Viagem) => {
     // Vamos usar 'encerramento' como um nome lógico, mas confirme se o seu componente tem essa aba.
     setActiveTab('form');
 };
+
 
 // --- CONCLUSÃO AUTOMÁTICA DE VIAGEM (AGORA ATUALIZA O FIRESTORE) ---
 
@@ -1421,30 +1510,55 @@ const concluirViagemHistorico = async (viagem: Viagem) => {
       )}
 
       <div className={`mx-auto p-4 space-y-6 ${activeTab === 'tray' ? 'w-full max-w-[1600px]' : 'max-w-4xl'}`}>
-        <header 
-          onClick={resetForm}
-          className="text-center py-6 bg-blue-700 text-white rounded-xl shadow-lg border-b-4 border-blue-900 cursor-pointer hover:bg-blue-800 transition-colors group relative"
-          title="Clique para iniciar uma Nova Programação (Limpar tudo)"
-        >
-          {/* Botão de Logout no canto superior esquerdo */}
-          <div 
-            onClick={(e) => { e.stopPropagation(); handleLogout(); }}
-            className="absolute top-4 left-4 hover:bg-red-600 text-white text-xs font-bold px-3 py-1.5 rounded transition-colors flex items-center gap-2 z-10"
-          >
-            <i className="fas fa-sign-out-alt"></i> SAIR
-          </div>
+{/* HEADER PRINCIPAL (clique para resetar só para quem pode usar Nova Programação) */}
+<header
+  onClick={() => {
+    // ✅ Bloqueia o reset/nova programação para perfis tray e tray+history
+    if (!canUseProgramming) return;
+    resetForm();
+  }}
+  className={`
+    text-center py-6 bg-blue-700 text-white rounded-xl shadow-lg border-b-4 border-blue-900 group relative transition-colors
+    ${canUseProgramming ? "cursor-pointer hover:bg-blue-800" : "cursor-default"}
+  `}
+  title={
+    canUseProgramming
+      ? "Clique para iniciar uma Nova Programação (Limpar tudo)"
+      : "Sem permissão para Nova Programação"
+  }
+>
+  {/* Botão de Logout (sempre clicável) */}
+  <div
+    onClick={(e) => {
+      e.stopPropagation(); // ✅ garante que o clique no SAIR não dispara o header
+      handleLogout();
+    }}
+    className="absolute top-4 left-4 hover:bg-red-600 text-white text-xs font-bold px-3 py-1.5 rounded transition-colors flex items-center gap-2 z-10 cursor-pointer"
+  >
+    <i className="fas fa-sign-out-alt"></i> SAIR
+  </div>
 
-          <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity bg-white text-blue-800 text-xs font-bold px-2 py-1 rounded">
-            NOVA PROGRAMAÇÃO <i className="fas fa-redo ml-1"></i>
-          </div>
-          <h1 className="text-3xl font-extrabold uppercase tracking-tight text-white">Programação de Viagem</h1>
-          <p className="text-blue-200 text-sm mt-1 font-medium">abertura e fechamento de programações</p>
-          {editingTripId && (
-            <div className="mt-2 inline-block bg-amber-400 text-blue-900 px-3 py-1 rounded-full text-xs font-black uppercase animate-pulse">
-              <i className="fas fa-edit mr-1"></i> Editando Viagem
-            </div>
-          )}
-        </header>
+  {/* Badge "NOVA PROGRAMAÇÃO" só aparece para quem tem permissão */}
+  {canUseProgramming && (
+    <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity bg-white text-blue-800 text-xs font-bold px-2 py-1 rounded">
+      NOVA PROGRAMAÇÃO <i className="fas fa-redo ml-1"></i>
+    </div>
+  )}
+
+  <h1 className="text-3xl font-extrabold uppercase tracking-tight text-white">
+    Programação de Viagem
+  </h1>
+  <p className="text-blue-200 text-sm mt-1 font-medium">
+    abertura e fechamento de programações
+  </p>
+
+  {editingTripId && (
+    <div className="mt-2 inline-block bg-amber-400 text-blue-900 px-3 py-1 rounded-full text-xs font-black uppercase animate-pulse">
+      <i className="fas fa-edit mr-1"></i> Editando Viagem
+    </div>
+  )}
+</header>
+
 
         <nav className={`flex p-1 rounded-lg shadow-inner border ${isDarkMode ? 'bg-[#2D3748] border-gray-600' : 'bg-white border-gray-200'}`}>
           {/* Botão Bandeja - MOVED TO FIRST */}
@@ -2039,7 +2153,7 @@ className={`py-2 px-4 rounded-lg text-xs font-bold uppercase transition-all bord
                     <div className="p-4 bg-amber-500 text-white font-black uppercase flex justify-between items-center">
                         <span><i className="fas fa-list mr-2"></i> {activeTrayCity}</span>
                         <span className="text-xs bg-black bg-opacity-20 px-2 py-1 rounded">
-                            {trayItems.filter(t => t.city === activeTrayCity).length} Itens
+                            {computedTrayItems.length} Itens
                         </span>
                     </div>
 
@@ -2065,9 +2179,9 @@ className={`py-2 px-4 rounded-lg text-xs font-bold uppercase transition-all bord
       </tr>
     </thead>
 
-
+            {/* LISTA DA ORDENS DA BANDEJA */}
                             <tbody>
-                                {trayItems.filter(t => t.city === activeTrayCity).map((item, index, arr) => (
+                                {computedTrayItems.map((item, index, arr) => (
                                <tr
   key={item.id}
   draggable
@@ -2201,7 +2315,7 @@ className={`py-2 px-4 rounded-lg text-xs font-bold uppercase transition-all bord
                                         <td className="p-2">
                                             <select 
                                                 value={item.attendant} 
-                                                onChange={(e) => updateTrayField(item.id, "attendant", e.target.value)}
+                                                onChange={(e) => updateTrayField(item.id, "attendant", (e.target.value || "").trim().toUpperCase())}
                                                 className={`w-full p-2 rounded border text-[10px] font-bold uppercase focus:ring-1 focus:ring-amber-400 outline-none ${themeInput}`}
                                             >
                                                 {ATTENDANTS.map(opt => <option key={opt} value={opt} className={isDarkMode ? 'bg-[#4A5568]' : ''}>{opt || "Selecione"}</option>)}
@@ -2292,34 +2406,41 @@ className={`py-2 px-4 rounded-lg text-xs font-bold uppercase transition-all bord
         <button
           type="button"
           disabled={!importPreview || importHasBlockingErrors}
-          onClick={async () => {
-            if (!importPreview) return;
+onClick={async () => {
+  if (!importPreview) return;
 
-            const region = importRegionFound;
-if (!region) return;
+  const region = findRegionByCity(importPreview.city) || activeTrayRegion || "";
+  if (!region) {
+    alert("Selecione uma região ou cadastre a cidade no REGIONS.");
+    return;
+  }
 
-            const newItem = {
-              date: importPreview.date,
-              clientName: importPreview.clientName,
-              status: importPreview.status,
-              attendant: importPreview.attendant,
-              city: importPreview.city,
-              region,          // ✅ necessário para seu filtro computedTrayItems
-              equipment: "",
-              observation: "",
-            };
+  const newItem = {
+  date: importPreview.date,
+  clientName: importPreview.clientName,
+  status: importPreview.status,
+  attendant: importPreview.attendant,
+  city: importPreview.city,
+  region,
+  equipment: "",
+  observation: "",
+  trayOrder: Date.now(),
+};
 
-            try {
-              await trayService.add(newItem);
+  console.log("IMPORT -> payload:", newItem);
 
-              if (region) setActiveTrayRegion(region);
-              setActiveTrayCity(importPreview.city);
+  try {
+    const createdId = await trayService.add(newItem);
+    console.log("IMPORT -> add OK, id:", createdId);
 
-              setIsImportOpen(false);
-            } catch (err) {
-              console.error("Erro ao criar item importado:", err);
-            }
-          }}
+    setActiveTrayRegion(region);
+    setActiveTrayCity(importPreview.city);
+    setIsImportOpen(false);
+  } catch (err) {
+    console.error("IMPORT -> add ERRO:", err);
+    alert("Falha ao adicionar a ordem. Veja o console.");
+  }
+}}
           className={`px-4 py-2 rounded-lg text-xs font-black uppercase border transition
             ${
               (!importPreview || importPreview.warnings.length > 0)
@@ -2341,7 +2462,7 @@ if (!region) return;
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div className={`text-xs ${isDarkMode ? 'text-white' : 'text-gray-800'}`}>
-              <span className="font-black">Data:</span> {importPreview.date}
+              <span className="font-black">Data:</span> {formatDateBR(importPreview.date)}
             </div>
             <div className={`text-xs ${isDarkMode ? 'text-white' : 'text-gray-800'}`}>
               <span className="font-black">Cidade:</span> {importPreview.city || "-"}
@@ -2445,25 +2566,41 @@ if (!region) return;
                           <p className="text-xs text-gray-500 font-medium italic">{viagem.state.services.join(', ') || 'Sem serviços definidos'}</p>
                         </div>
                             
-                        <div className="flex flex-wrap gap-2">
-                          <button onClick={() => carregarViagem(viagem)} className="bg-blue-50 hover:bg-blue-600 hover:text-white text-blue-600 px-4 py-2 rounded-lg text-xs font-black uppercase transition-all flex items-center gap-2">
-                            <i className="fas fa-edit"></i> Editar
-                          </button>
-                            
-                      {/* Apenas mostra o botão RELATÓRIO se a viagem estiver finalizada */}
-                           {isFinalized ? (
-                          <button onClick={() => setRelatorioViagem(viagem)} className="bg-indigo-50 hover:bg-indigo-600 hover:text-white text-indigo-600 px-4 py-2 rounded-lg text-xs font-black uppercase transition-all flex items-center gap-2">
-                           <i className="fas fa-file-alt"></i> Relatório
-                          </button>
-                           ) : (
-                         // Se não estiver finalizada (ABERTA), não renderiza NADA (remove o botão 'Concluir')
-                         null 
-                           )}
+  <div className="flex flex-wrap gap-2">
+  {/* EDITAR (bloqueado para tray+history; liberado só para admin/all) */}
+  {canEditHistory && (
+    <button
+      onClick={() => carregarViagemSafe(viagem)}
+      className="bg-blue-50 hover:bg-blue-600 hover:text-white text-blue-600 px-4 py-2 rounded-lg text-xs font-black uppercase transition-all flex items-center gap-2"
+      title="Editar viagem"
+    >
+      <i className="fas fa-edit"></i> Editar
+    </button>
+  )}
 
-                          <button onClick={() => viagem.id && excluirViagem(viagem.id)} className="bg-red-50 hover:bg-red-600 hover:text-white text-red-600 px-4 py-2 rounded-lg text-xs font-black uppercase transition-all">
-                            <i className="fas fa-trash"></i>
-                          </button>
-                        </div>
+  {/* RELATÓRIO (continua permitido para quem vê histórico; somente se finalizada) */}
+  {isFinalized ? (
+    <button
+      onClick={() => setRelatorioViagem(viagem)}
+      className="bg-indigo-50 hover:bg-indigo-600 hover:text-white text-indigo-600 px-4 py-2 rounded-lg text-xs font-black uppercase transition-all flex items-center gap-2"
+      title="Ver relatório"
+    >
+      <i className="fas fa-file-alt"></i> Relatório
+    </button>
+  ) : null}
+
+  {/* EXCLUIR (bloqueado para tray+history; liberado só para admin/all) */}
+  {canEditHistory && (
+    <button
+      onClick={() => viagem.id && excluirViagemSafe(viagem.id)}
+      className="bg-red-50 hover:bg-red-600 hover:text-white text-red-600 px-4 py-2 rounded-lg text-xs font-black uppercase transition-all"
+      title="Excluir viagem"
+    >
+      <i className="fas fa-trash"></i>
+    </button>
+  )}
+</div>
+
                       </div>
                     );
                   })}
