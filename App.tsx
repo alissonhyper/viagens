@@ -119,8 +119,33 @@ const gerarTextoRelatorio = (viagem: Viagem): string => {
    text += `\n`; 
   });
 
+
   return text.trim();
 };
+
+
+
+// ==============================
+// RELATÓRIO DO DIA (BANDEJA) - TIPOS (ficam fora do App para todo arquivo enxergar)
+// ==============================
+type TrayReportItem = {
+  date: string;        // yyyy-mm-dd
+  clientName: string;
+  status: string;
+  city: string;        // nome oficial (com acento se existir)
+  region: string;      // nome da região
+};
+
+type TrayReportData = {
+  generatedAt: Date;
+  totalGeral: number;
+  totalsPorRegiao: Record<string, number>;
+  totalsPorCidade: Record<string, Record<string, number>>; // region -> city -> total
+  grouped: Record<string, Record<string, TrayReportItem[]>>; // region -> city -> items
+};
+
+
+
 
 interface ModalRelatorioProps {
   viagem: Viagem;
@@ -160,6 +185,925 @@ const ModalRelatorio: React.FC<ModalRelatorioProps> = ({ viagem, onClose }) => {
     </div>
   );
 }
+
+
+// =======================================================
+// MODAL: RELATÓRIO DO DIA (BANDEJA) — versão mais visual
+// =======================================================
+
+type TrayReportModalProps = {
+  isDarkMode: boolean;
+  data: TrayReportData;
+  text: string;
+  copied: boolean;
+  onClose: () => void;
+  onCopy: (txt: string) => void;
+  onPrint: (txt: string) => void;
+  formatDateBR: (iso?: string) => string;
+};
+
+const TrayReportModal: React.FC<TrayReportModalProps> = ({
+  isDarkMode,
+  data,
+  text,
+  copied,
+  onClose,
+  onCopy,
+  onPrint,
+  formatDateBR,
+}) => {
+  // ✅ mantém regiões recolhíveis (começa tudo aberto)
+  const [openRegions, setOpenRegions] = React.useState<Record<string, boolean>>(() => {
+    const initial: Record<string, boolean> = {};
+    Object.keys(data.grouped || {}).forEach((r) => (initial[r] = true));
+    return initial;
+  });
+
+  const toggleRegion = (region: string) => {
+    setOpenRegions((prev) => ({ ...prev, [region]: !prev[region] }));
+  };
+
+  const regions = Object.keys(data.grouped || {}).sort(
+    (a, b) => (data.totalsPorRegiao?.[b] ?? 0) - (data.totalsPorRegiao?.[a] ?? 0)
+  );
+
+  const generatedAtLabel = data.generatedAt
+    ? data.generatedAt.toLocaleString("pt-BR")
+    : new Date().toLocaleString("pt-BR");
+
+  const cardBase = isDarkMode
+    ? "border-white/10 bg-white/5"
+    : "border-gray-200 bg-gray-50";
+
+
+
+
+// 1) --- cor do badge/chip por status ---
+// Observação: aqui a gente pode "unificar" cores sem perder o status (chave) separado.
+
+const statusStyle = (status?: string) => {
+  const s = (status || "").toUpperCase();
+
+  // Helpers de cor (pra unificar fácil)
+  const pillRed = isDarkMode
+    ? "bg-red-500/15 text-red-200 border-red-400/25"
+    : "bg-red-50 text-red-700 border-red-200";
+
+  const pillGray = isDarkMode
+    ? "bg-gray-500/15 text-gray-200 border-gray-400/25"
+    : "bg-gray-100 text-gray-700 border-gray-200";
+
+  // Azul/Lilás unificado (Ampliação / Rede / Orçamento)
+  const pillBlueUnified = isDarkMode
+    ? "bg-indigo-500/15 text-indigo-200 border-indigo-400/25"
+    : "bg-indigo-50 text-indigo-700 border-indigo-200";
+
+  const pillGreen = isDarkMode
+    ? "bg-emerald-500/15 text-emerald-200 border-emerald-400/25"
+    : "bg-emerald-50 text-emerald-700 border-emerald-200";
+
+  // Verde “diferente” (Mudança de endereço) – próximo ao verde, mas não igual
+  const pillTeal = isDarkMode
+    ? "bg-teal-500/15 text-teal-200 border-teal-400/25"
+    : "bg-teal-50 text-teal-800 border-teal-200";
+
+  // Laranja unificado (Lentidão / Quedas)
+  const pillOrangeUnified = isDarkMode
+    ? "bg-orange-500/15 text-orange-200 border-orange-400/25"
+    : "bg-orange-50 text-orange-700 border-orange-200";
+
+    
+ // ORDEM (priority menor = aparece primeiro):
+  // 1) Sem internet
+  // 2) Mudança de endereço
+  // 3) Cliente novo
+  // 10.. = “meio” (orcamento/ampliacao/rede)
+  // 20.. = “meio” (lentidao/quedas)
+  // 96 = Outros (fim do bloco, antes dos 3 últimos)
+  // 97/98/99 = 3 últimos fixos: assinatura, cancelamento, cobrança
+
+  // 1) Sem internet (CRÍTICO)
+  if (s.includes("SEM INTERNET") || s.includes("SEM SINAL")) {
+    return {
+      key: "sem_internet",
+      label: "Sem internet",
+      priority: 1,
+      dot: "bg-red-400",
+      pill: pillRed,
+    };
+  }
+
+  // 2) Cliente novo (CRÍTICO) 
+  if (s.includes("CLIENTE NOVO")) {
+    return {
+      key: "cliente_novo",
+      label: "Cliente novo",
+      priority: 2,
+      dot: "bg-emerald-400",
+      pill: pillGreen,
+    };
+  }
+
+    // 3) Mudança de endereço (CRÍTICO) 
+  // pega com/sem acento e variações
+  if (
+    s.includes("MUDAN") &&
+    (s.includes("ENDERE") || s.includes("ENDEREÇO") || s.includes("ENDERECO"))
+  ) {
+    return {
+      key: "mudanca_endereco",
+      label: "Mudança end.",
+      priority: 3,
+      dot: "bg-teal-400",
+      pill: pillTeal,
+    };
+  }
+
+  // 4) Grupo azul/lilás unificado (cor igual, mas status separados)
+  // Ampliação
+  if (s.includes("AMPLIA")) {
+    return {
+      key: "ampliacao",
+      label: "Ampliação",
+      priority: 10,
+      dot: "bg-indigo-400",
+      pill: pillBlueUnified,
+    };
+  }
+
+    // Orçamento
+    if (s.includes("ORÇAMENTO") || s.includes("ORCAMENTO")) {
+    return {
+      key: "orcamento",
+      label: "Orçamento",
+      priority: 11,
+      dot: "bg-indigo-400",
+      pill: pillBlueUnified,
+    };
+  }
+
+  // "REDE" ou Serviço de Rede, pode aparecer em outros textos, mas aqui está ok
+  if (
+    s.includes("SERVIÇO DE REDE") ||
+    s.includes("SERVICO DE REDE") ||
+    s.includes("REDE")
+  ) {
+    return {
+      key: "rede",
+      label: "Rede",
+      priority: 12,
+      dot: "bg-indigo-400",
+      pill: pillBlueUnified,
+    };
+  }
+
+  // 5) Lentidão / Quedas (laranja unificado)
+  if (s.includes("LENTID")) {
+    return {
+      key: "lentidao",
+      label: "Lentidão",
+      priority: 20,
+      dot: "bg-orange-400",
+      pill: pillOrangeUnified,
+    };
+  }
+
+  if (s.includes("QUEDA")) {
+    return {
+      key: "quedas",
+      label: "Quedas",
+      priority: 21,
+      dot: "bg-orange-400",
+      pill: pillOrangeUnified,
+    };
+  }
+
+  // 6) Outros (fim do bloco “normal”, ANTES dos 3 últimos fixos)
+  // Deixa ele alto para ficar perto do fim, mas não maior que os 3 últimos.
+  const outros = () => ({
+    key: "outros",
+    label: "Outros",
+    priority: 96,
+    dot: "bg-amber-400",
+    pill: isDarkMode
+      ? "bg-white/5 text-white/80 border-white/10"
+      : "bg-white text-gray-700 border-gray-200",
+  });
+
+  // 7) 3 ÚLTIMOS (nessa ordem): Assinatura → Cancelamento → Cobrança
+  if (s.includes("ASSINAT")) {
+    return {
+      key: "assinatura",
+      label: "Assinatura",
+      priority: 97,
+      dot: "bg-gray-400",
+      pill: pillGray,
+    };
+  }
+
+  if (s.includes("CANCEL")) {
+    return {
+      key: "cancelamento",
+      label: "Cancelamento",
+      priority: 98,
+      dot: "bg-gray-400",
+      pill: pillGray,
+    };
+  }
+
+  if (s.includes("COBRANÇA") || s.includes("COBRANCA")) {
+    return {
+      key: "cobranca",
+      label: "Cobrança",
+      priority: 99,
+      dot: "bg-gray-400",
+      pill: pillGray,
+    };
+  }
+
+  // padrão: realmente não mapeou nada
+  return outros();
+};
+
+
+// Tema (pill/dot/row) baseado no statusStyle (fonte única de cores)
+const getStatusTheme = (status?: string) => {
+  const st = statusStyle(status);
+
+  // "row" é só para borda/destaque de container
+  // Aqui a gente padroniza o row por KEY (sem inventar cores novas)
+  const row =
+    st.key === "sem_internet"
+      ? (isDarkMode ? "border-red-400/20" : "border-red-200")
+    : st.key === "mudanca_endereco"
+      ? (isDarkMode ? "border-teal-400/20" : "border-teal-200")
+    : ["cancelamento", "assinatura", "cobranca"].includes(st.key)
+      ? (isDarkMode ? "border-gray-400/20" : "border-gray-200")
+    : ["orcamento", "ampliacao", "rede"].includes(st.key)
+      ? (isDarkMode ? "border-indigo-400/20" : "border-indigo-200")
+    : st.key === "cliente_novo"
+      ? (isDarkMode ? "border-emerald-400/20" : "border-emerald-200")
+    : ["lentidao", "quedas"].includes(st.key)
+      ? (isDarkMode ? "border-orange-400/20" : "border-orange-200")
+    : (isDarkMode ? "border-white/10" : "border-gray-200");
+
+  return {
+    pill: st.pill,
+    dot: st.dot,
+    row,
+  };
+};
+
+
+
+
+// 2) Sort mode
+type SortMode = "dateAsc" | "dateDesc" | "nameAsc" | "nameDesc";
+
+const [sortMode, setSortMode] = React.useState<SortMode>("dateAsc");
+
+// 3) Buckets (usa statusStyle)
+const bucketsInfo = React.useMemo(() => {
+  const map = new Map<string, ReturnType<typeof statusStyle>>();
+
+  Object.values(data.grouped || {}).forEach((citiesObj) => {
+    Object.values(citiesObj || {}).forEach((items) => {
+      (items || []).forEach((it) => {
+        const meta = statusStyle(it.status);
+        if (!map.has(meta.key)) map.set(meta.key, meta);
+      });
+    });
+  });
+
+  const arr = Array.from(map.values()).sort((a, b) => a.priority - b.priority);
+  return {
+    keys: arr.map((x) => x.key),
+    metaByKey: Object.fromEntries(arr.map((x) => [x.key, x])) as Record<string, ReturnType<typeof statusStyle>>,
+  };
+}, [data, isDarkMode]);
+
+// 4) statusOn (liga/desliga chips)
+const [statusOn, setStatusOn] = React.useState<Record<string, boolean>>(() => {
+  const init: Record<string, boolean> = {};
+  bucketsInfo.keys.forEach((k) => (init[k] = true));
+  return init;
+});
+
+React.useEffect(() => {
+  setStatusOn((prev) => {
+    const next = { ...prev };
+    bucketsInfo.keys.forEach((k) => {
+      if (typeof next[k] !== "boolean") next[k] = true;
+    });
+    return next;
+  });
+}, [bucketsInfo.keys.join("|")]);
+
+// 5) bucketCounts (usa statusStyle)
+const bucketCounts = React.useMemo(() => {
+  const counts: Record<string, number> = {};
+  Object.values(data.grouped || {}).forEach((citiesObj) => {
+    Object.values(citiesObj || {}).forEach((items) => {
+      (items || []).forEach((it) => {
+        const meta = statusStyle(it.status);
+        counts[meta.key] = (counts[meta.key] || 0) + 1;
+      });
+    });
+  });
+  return counts;
+}, [data, isDarkMode]);
+
+// 6) helpers (toggle, enable all, only buckets)
+const toggleBucket = (key: string) => {
+  setStatusOn((prev) => ({ ...prev, [key]: !prev[key] }));
+};
+
+const enableAllBuckets = () => {
+  const init: Record<string, boolean> = {};
+  bucketsInfo.keys.forEach((k) => (init[k] = true));
+  setStatusOn(init);
+};
+
+const setOnlyBuckets = (keysToEnable: string[]) => {
+  const next: Record<string, boolean> = {};
+  bucketsInfo.keys.forEach((k) => (next[k] = keysToEnable.includes(k)));
+  setStatusOn(next);
+};
+
+
+// ✅ Críticos: Sem internet + Mudança de endereço + Cliente Novo
+const criticalKeys = ["sem_internet", "mudanca_endereco", "cliente_novo"];
+
+// ✅ Leves: resto do operacional
+const lightKeys = [
+  "cancelamento",
+  "assinatura",
+  "cobranca",
+  "orcamento",
+  "ampliacao",
+  "rede",
+  "lentidao",
+  "quedas",
+  "outros",
+];
+
+
+const enableOnlyCritical = () => setOnlyBuckets(criticalKeys);
+const enableOnlyLight = () => setOnlyBuckets(lightKeys);
+
+
+
+// Converte data pra número (ms) — suporta ISO e DD/MM/YYYY
+const dateToMs = (d?: string) => {
+  if (!d) return 0;
+
+  // ISO: 2026-01-10 ou 2026-01-10T...
+  if (/^\d{4}-\d{2}-\d{2}/.test(d)) {
+    const t = Date.parse(d);
+    return Number.isFinite(t) ? t : 0;
+  }
+
+  // BR: 10/01/2026
+  const m = d.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+  if (m) {
+    const dd = Number(m[1]);
+    const mm = Number(m[2]) - 1;
+    const yyyy = Number(m[3]);
+    return new Date(yyyy, mm, dd).getTime();
+  }
+
+  // fallback
+  const t = Date.parse(d);
+  return Number.isFinite(t) ? t : 0;
+};
+
+
+// 7) prepareItems (usa statusStyle + statusOn + sortMode)
+const prepareItems = (items: TrayReportItem[]) => {
+  const filtered = (items || []).filter((it) => {
+    const meta = statusStyle(it.status);
+    return statusOn[meta.key] !== false;
+  });
+
+
+const byDateAsc = (a: TrayReportItem, b: TrayReportItem) => dateToMs(a.date) - dateToMs(b.date);
+
+
+const byStatus = (a: TrayReportItem, b: TrayReportItem) => {
+  const sa = statusStyle(a.status);
+  const sb = statusStyle(b.status);
+  if (sa.priority !== sb.priority) return sa.priority - sb.priority;
+  return (sa.label || "").localeCompare(sb.label || "", "pt-BR", { sensitivity: "base" });
+};
+
+const byClient = (a: TrayReportItem, b: TrayReportItem) =>
+  (a.clientName || "").localeCompare(b.clientName || "", "pt-BR", { sensitivity: "base" });
+
+
+return filtered.slice().sort((a, b) => {
+  if (sortMode === "dateAsc")  return byDateAsc(a, b) || byStatus(a, b) || byClient(a, b);
+  if (sortMode === "dateDesc") return byDateAsc(b, a) || byStatus(a, b) || byClient(a, b);
+  if (sortMode === "nameAsc")  return byClient(a, b) || byStatus(a, b) || byDateAsc(a, b);
+  // nameDesc
+  return byClient(b, a) || byStatus(a, b) || byDateAsc(a, b);
+});
+};
+
+  const isDate = sortMode === "dateAsc" || sortMode === "dateDesc";
+  const isName = sortMode === "nameAsc" || sortMode === "nameDesc";
+
+  // direção atual das setas
+  const dateDir: "asc" | "desc" = sortMode === "dateDesc" ? "desc" : "asc";
+  const nameDir: "asc" | "desc" = sortMode === "nameDesc" ? "desc" : "asc";
+
+  // alterna ASC/DESC quando clicar no botão
+  const toggleDateSort = () => {
+    setSortMode((prev) => (prev === "dateAsc" ? "dateDesc" : "dateAsc"));
+  };
+
+  const toggleNameSort = () => {
+    setSortMode((prev) => (prev === "nameAsc" ? "nameDesc" : "nameAsc"));
+  };
+
+
+  // 8) Texto do relatório (SEMPRE acompanha filtros + ordenação atuais)
+  const reportText = React.useMemo(() => {
+  const lines: string[] = [];
+
+  // Cabeçalho do texto
+  const generatedAtLabel = data.generatedAt
+    ? data.generatedAt.toLocaleString("pt-BR")
+    : new Date().toLocaleString("pt-BR");
+
+  lines.push(`RELATÓRIO BANDEJA – ${generatedAtLabel}`);
+  lines.push(`TOTAL: ${data.totalGeral ?? 0} ordens abertas`);
+  lines.push(""); // 1 linha em branco
+
+  // Regiões (usa a mesma ordem que você já calculou em "regions")
+  regions.forEach((region) => {
+    const regTotal = data.totalsPorRegiao?.[region] ?? 0;
+    const citiesObj = data.grouped?.[region] || {};
+    if (!regTotal) return;
+
+    // Região em destaque
+    lines.push(`${region.toUpperCase()} (${regTotal})`);
+    lines.push("");
+
+    // Ordem de cidades: respeita REGIONS[region] quando existir, senão ordena por nome
+    const cities = Object.keys(citiesObj);
+    const official = (REGIONS as any)?.[region] || []; // REGIONS deve existir no mesmo arquivo
+    const cityOrder = [
+      ...official.filter((c: string) => cities.includes(c)),
+      ...cities.filter((c) => !official.includes(c)).sort((a, b) => a.localeCompare(b)),
+    ];
+
+    cityOrder.forEach((city) => {
+      const itemsRaw = citiesObj[city] || [];
+
+      // IMPORTANTÍSSIMO: usa prepareItems (filtro + sortMode)
+      const items = prepareItems(itemsRaw);
+      if (!items.length) return;
+
+      lines.push(`- ${city} (${items.length})`);
+
+      items.forEach((it) => {
+        const d = formatDateBR(it.date);
+        const client = (it.clientName || "").toUpperCase();
+        const st = (it.status || "").toUpperCase();
+        lines.push(`  ${d} – ${client} – ${st}`);
+      });
+
+      lines.push(""); // 1 linha em branco ENTRE cidades
+    });
+
+    lines.push(""); // 1 linha em branco ENTRE regiões
+  });
+
+  return lines.join("\n").trim();
+}, [
+  data,
+  regions,     // acompanha ordem/total
+  sortMode,    // acompanha Data/Nome/Status (o que você tiver)
+  statusOn,    // acompanha chips ligados/desligados
+  isDarkMode,  // não é obrigatório, mas evita edge quando statusStyle muda com tema
+]);
+
+
+
+// "ANTES DO RETURN"
+
+
+  return ( 
+    <div className="fixed inset-0 z-[140] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in duration-150">
+      <div
+        className={`w-full max-w-6xl max-h-[90vh] rounded-2xl overflow-hidden shadow-2xl border ${
+          isDarkMode ? "bg-[#1F2937] border-white/10" : "bg-white border-gray-200"
+        }`}
+      >
+        {/* HEADER (sticky) */}
+        <div
+          className={`sticky top-0 z-10 px-5 py-4 border-b ${
+            isDarkMode ? "bg-[#0F172A] border-white/10" : "bg-white border-gray-200"
+          }`}
+        >
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <div className="flex items-center gap-3">
+                <div
+                  className={`h-9 w-9 rounded-xl flex items-center justify-center border ${
+                    isDarkMode ? "bg-amber-500/10 border-amber-400/20" : "bg-amber-50 border-amber-200"
+                  }`}
+                  title="Relatório do dia (Bandeja)"
+                >
+                  <i className="fas fa-clipboard-list text-amber-500" />
+                </div>
+
+                <div className="min-w-0">
+                  <h3 className={`font-black uppercase text-base ${isDarkMode ? "text-white" : "text-gray-900"}`}>
+                    Relatório do Dia (Bandeja)
+                  </h3>
+                  <div className={`text-[11px] font-bold ${isDarkMode ? "text-white/70" : "text-gray-600"}`}>
+                    Gerado em: {generatedAtLabel} • Total:{" "}
+                    <span className={`${isDarkMode ? "text-amber-300" : "text-amber-700"}`}>
+                      {data.totalGeral ?? 0}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* AÇÕES */}
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => onCopy(reportText)}
+                className={`px-3 py-2 rounded-lg text-xs font-black uppercase border transition flex items-center gap-2 ${
+                  isDarkMode
+                    ? "bg-white/5 text-amber-200 border-white/10 hover:bg-white/10"
+                    : "bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100"
+                }`}
+                title="Copiar texto do relatório"
+              >
+                <i className="fas fa-copy" />
+                {copied ? "Copiado!" : "Copiar texto"}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => onPrint(reportText)}
+                className={`px-3 py-2 rounded-lg text-xs font-black uppercase border transition flex items-center gap-2 ${
+                  isDarkMode
+                    ? "bg-white/5 text-blue-200 border-white/10 hover:bg-white/10"
+                    : "bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100"
+                }`}
+                title="Imprimir relatório"
+              >
+                <i className="fas fa-print" />
+                Imprimir
+              </button>
+
+              <button
+                type="button"
+                onClick={onClose}
+                className={`h-9 w-9 rounded-lg border transition flex items-center justify-center ${
+                  isDarkMode
+                    ? "bg-white/5 border-white/10 hover:bg-white/10 text-white/80"
+                    : "bg-gray-50 border-gray-200 hover:bg-gray-100 text-gray-700"
+                }`}
+                title="Fechar"
+              >
+                <i className="fas fa-times" />
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* BODY */}
+        <div className="p-5 overflow-auto max-h-[calc(90vh-76px)] space-y-4">
+
+        <div className={`rounded-xl border p-4 ${cardBase}`}>
+<div className="flex items-center justify-between gap-3 flex-wrap">
+  <div className="flex items-center gap-3 flex-wrap">
+    <div className={`text-[11px] font-black uppercase ${isDarkMode ? "text-white/70" : "text-gray-700"}`}>
+      Filtro por status
+    </div>
+
+{/* ✅ ORDENAR (2 botões simples: Data / Nome) */}
+<div className="flex items-center gap-2">
+  <span
+    className={`text-[11px] font-black uppercase ${
+      isDarkMode ? "text-white/50" : "text-gray-500"
+    }`}
+  >
+    Ordenar
+  </span>
+
+  {/* Botão DATA: alterna ↑/↓ */}
+  <button
+    type="button"
+    onClick={toggleDateSort}
+    className={`px-3 py-1.5 rounded-lg text-[11px] font-black uppercase border transition inline-flex items-center gap-2 ${
+      isDate
+        ? isDarkMode
+          ? "bg-blue-500/15 text-blue-200 border-blue-400/25"
+          : "bg-blue-50 text-blue-700 border-blue-200"
+        : isDarkMode
+          ? "bg-white/5 text-white/70 border-white/10 hover:bg-white/10"
+          : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50"
+    }`}
+    title="Ordenar por data"
+  >
+    Data
+    <i className={`fas ${dateDir === "asc" ? "fa-arrow-up" : "fa-arrow-down"} text-[10px]`} />
+  </button>
+
+  {/* Botão NOME: alterna ↑/↓ */}
+  <button
+    type="button"
+    onClick={toggleNameSort}
+    className={`px-3 py-1.5 rounded-lg text-[11px] font-black uppercase border transition inline-flex items-center gap-2 ${
+      isName
+        ? isDarkMode
+          ? "bg-emerald-500/15 text-emerald-200 border-emerald-400/25"
+          : "bg-emerald-50 text-emerald-700 border-emerald-200"
+        : isDarkMode
+          ? "bg-white/5 text-white/70 border-white/10 hover:bg-white/10"
+          : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50"
+    }`}
+    title="Ordenar por nome"
+  >
+    Nome
+    <i className={`fas ${nameDir === "asc" ? "fa-arrow-up" : "fa-arrow-down"} text-[10px]`} />
+  </button>
+</div>
+</div>
+
+  {/* botões à direita (os seus) */}
+  <div className="flex gap-2 flex-wrap">
+    {/* botões à direita (os seus) */}
+<div className="flex gap-2 flex-wrap">
+  <button
+    type="button"
+    onClick={enableAllBuckets}
+    className={`px-3 py-1.5 rounded-lg text-[11px] font-black uppercase border transition ${
+      isDarkMode
+        ? "bg-white/5 text-white/80 border-white/10 hover:bg-white/10"
+        : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50"
+    }`}
+  >
+    Todos
+  </button>
+
+  <button
+    type="button"
+    onClick={enableOnlyCritical}
+    className={`px-3 py-1.5 rounded-lg text-[11px] font-black uppercase border transition ${
+      isDarkMode
+        ? "bg-red-500/10 text-red-200 border-red-400/20 hover:bg-red-500/15"
+        : "bg-red-50 text-red-700 border-red-200 hover:bg-red-100"
+    }`}
+  >
+    Críticos
+  </button>
+
+  <button
+    type="button"
+    onClick={enableOnlyLight}
+    className={`px-3 py-1.5 rounded-lg text-[11px] font-black uppercase border transition ${
+      isDarkMode
+        ? "bg-amber-500/10 text-amber-200 border-amber-400/20 hover:bg-amber-500/15"
+        : "bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100"
+    }`}
+  >
+    Leves
+  </button>
+</div>
+
+  </div>
+</div>
+
+
+  <div className="mt-3 flex flex-wrap gap-2">
+    {bucketsInfo.keys.map((k) => {
+      const meta = bucketsInfo.metaByKey[k];
+      const on = statusOn[k] !== false;
+      const count = bucketCounts[k] || 0;
+
+      return (
+        <button
+          key={k}
+          type="button"
+          onClick={() => toggleBucket(k)}
+          className={`px-3 py-2 rounded-full text-[11px] font-black uppercase border transition flex items-center gap-2 ${
+            on
+              ? meta.pill
+              : isDarkMode
+                ? "bg-white/5 text-white/40 border-white/10 hover:bg-white/10"
+                : "bg-gray-100 text-gray-500 border-gray-200 hover:bg-gray-200"
+          }`}
+          title={on ? "Clique para ocultar" : "Clique para mostrar"}
+        >
+          <span className={`h-2 w-2 rounded-full ${meta.dot}`} />
+          {meta.label} ({count})
+        </button>
+      );
+    })}
+  </div>
+</div>
+
+
+          {/* RESUMO POR REGIÃO (chips) */}
+          <div className={`rounded-xl border p-4 ${cardBase}`}>
+            <div className={`text-[11px] font-black uppercase mb-3 ${isDarkMode ? "text-white/70" : "text-gray-700"}`}>
+              Resumo por região
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              {regions.map((region) => {
+                const count = data.totalsPorRegiao?.[region] ?? 0;
+                const hasItems = count > 0;
+
+                return (
+                  <button
+                    key={region}
+                    type="button"
+                    onClick={() => toggleRegion(region)}
+                    className={`px-3 py-2 rounded-full text-[11px] font-black uppercase border transition flex items-center gap-2 ${
+                      hasItems
+                        ? isDarkMode
+                          ? "bg-amber-500/10 text-amber-200 border-amber-400/20 hover:bg-amber-500/15"
+                          : "bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100"
+                        : isDarkMode
+                          ? "bg-white/5 text-white/50 border-white/10 hover:bg-white/10"
+                          : "bg-gray-100 text-gray-600 border-gray-200 hover:bg-gray-200"
+                    }`}
+                    title={openRegions[region] ? "Clique para recolher" : "Clique para expandir"}
+                  >
+                    <span className={`h-2 w-2 rounded-full ${hasItems ? "bg-amber-400" : "bg-gray-400"}`} />
+                    {region}: {count}
+                    <i className={`fas ${openRegions[region] ? "fa-chevron-up" : "fa-chevron-down"} text-[10px]`} />
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* LISTA POR REGIÃO -> CIDADE -> ITENS */}
+          {regions.map((region) => {
+            const citiesObj = data.grouped?.[region] || {};
+            const regionTotal = data.totalsPorRegiao?.[region] ?? 0;
+
+            const cities = Object.keys(citiesObj).sort(
+              (a, b) => (citiesObj[b]?.length ?? 0) - (citiesObj[a]?.length ?? 0)
+            );
+
+            return (
+              <div key={region} className={`rounded-2xl border overflow-hidden ${isDarkMode ? "border-white/10" : "border-gray-200"}`}>
+                {/* Header região */}
+                <button
+                  type="button"
+                  onClick={() => toggleRegion(region)}
+                  className={`w-full px-4 py-3 flex items-center justify-between transition ${
+                    isDarkMode ? "bg-white/5 hover:bg-white/10" : "bg-gray-50 hover:bg-gray-100"
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <span className={`h-2.5 w-2.5 rounded-full ${regionTotal > 0 ? "bg-amber-400" : "bg-gray-400"}`} />
+                    <span className={`font-black uppercase ${isDarkMode ? "text-white" : "text-gray-900"}`}>{region}</span>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <span
+                      className={`text-[11px] font-black px-2 py-1 rounded-full border ${
+                        isDarkMode
+                          ? "bg-black/30 text-white/90 border-white/10"
+                          : "bg-white text-gray-700 border-gray-200"
+                      }`}
+                    >
+                      {regionTotal} ORDENS
+                    </span>
+                    <i className={`fas ${openRegions[region] ? "fa-chevron-up" : "fa-chevron-down"} ${isDarkMode ? "text-white/60" : "text-gray-500"}`} />
+                  </div>
+                </button>
+
+                {/* Conteúdo região */}
+                {openRegions[region] && (
+                  <div className="p-4 space-y-3">
+                    {cities.map((city) => {
+                      const itemsRaw = citiesObj[city] || [];
+                      const items = prepareItems(itemsRaw);
+                      if (!items.length) return null;
+
+                      return (
+                        <div
+                          key={city}
+                          className={`rounded-xl border p-4 ${
+                            isDarkMode ? "border-white/10 bg-white/5" : "border-gray-200 bg-white"
+                          }`}
+                        >
+                          {/* Cabeçalho cidade */}
+                          <div className="flex items-center justify-between mb-3">
+                            <div className={`font-black uppercase ${isDarkMode ? "text-white" : "text-gray-900"}`}>
+                              {city}
+                            </div>
+
+                            <span
+                              className={`text-[11px] font-black px-2 py-1 rounded-full border ${
+                                isDarkMode
+                                  ? "bg-amber-500/10 text-amber-200 border-amber-400/20"
+                                  : "bg-amber-50 text-amber-800 border-amber-200"
+                              }`}
+                            >
+                              {items.length}
+                            </span>
+                          </div>
+
+{/* Itens (já vem filtrado + ordenado pelo prepareItems, conforme sortMode e statusOn) */}
+<div className="space-y-2">
+  {items.map((it, idx) => {
+    // 1) Pega o "tema" do status (cor do pill + cor da bolinha + prioridade)
+    const st = statusStyle(it.status);
+
+    return (
+      <div
+        key={`${city}-${idx}`}
+        className={`rounded-lg px-3 py-2 flex flex-col md:flex-row md:items-center md:gap-3 md:justify-between ${
+          isDarkMode ? "bg-black/20" : "bg-gray-50"
+        }`}
+      >
+        {/* 2) Lado esquerdo: bolinha + data */}
+        <div className="flex items-center gap-2">
+          {/* Bolinha colorida do status (deixa muito mais intuitivo) */}
+          <span className={`h-2 w-2 rounded-full ${st.dot}`} />
+
+          {/* Data formatada (usa seu formatDateBR) */}
+          <div
+            className={`text-xs font-black tabular-nums ${
+              isDarkMode ? "text-white" : "text-gray-900"
+            }`}
+          >
+            {formatDateBR(it.date)}
+          </div>
+        </div>
+
+        {/* 3) Meio: nome do cliente */}
+        <div
+          className={`text-xs font-black uppercase flex-1 ${
+            isDarkMode ? "text-white/90" : "text-gray-900"
+          }`}
+        >
+          {it.clientName}
+        </div>
+
+        {/* 4) Direita: "pill" do status com cor */}
+        <span
+          className={`text-[11px] font-black uppercase px-2 py-1 rounded-full border w-fit ${st.pill}`}
+          title={it.status || ""}
+        >
+          {it.status || "—"}
+        </span>
+      </div>
+    );
+})
+}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+
+          {/* TEXTO PRONTO (para copiar/colar) */}
+          <details className={`rounded-xl border ${cardBase}`}>
+            <summary
+              className={`cursor-pointer select-none px-4 py-3 font-black uppercase text-xs ${
+                isDarkMode ? "text-white/80" : "text-gray-700"
+              }`}
+            >
+              Texto do relatório (para copiar/colar)
+            </summary>
+            <div className="p-4">
+              <textarea
+                readOnly
+                value={reportText}
+                className={`w-full h-60 font-mono text-xs p-3 rounded-lg border outline-none ${
+                  isDarkMode ? "bg-black/30 text-white/80 border-white/10" : "bg-white text-gray-800 border-gray-200"
+                }`}
+              />
+            </div>
+          </details>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+
+
+
 
 const App: React.FC = () => {
   // --- AUTENTICAÇÃO ---
@@ -293,6 +1237,15 @@ const [importPreview, setImportPreview] = useState<null | {
   warnings: string[];
 }>(null);
 
+
+
+const [isTrayReportOpen, setIsTrayReportOpen] = useState(false);
+const [trayReportData, setTrayReportData] = useState<TrayReportData | null>(null);
+const [trayReportText, setTrayReportText] = useState("");
+const [trayReportCopied, setTrayReportCopied] = useState(false);
+
+
+
 // --- Documento do usuário (Firestore: appUsers/{uid}) ---
 type AppUserDoc = {
   active: boolean;
@@ -304,22 +1257,30 @@ const [userData, setUserData] = useState<AppUserDoc | null>(null);
 // --- Permissões do usuário (helper) ---
 const permissions = userData?.permissions ?? [];
 
-// --- Permissão: pode usar importação via mensagem padrão (botão "Adicionar Ordem") ---
-const canImportStandardForm =
-  permissions.includes("admin") ||
-  permissions.includes("all") ||
-  permissions.includes("trayImport");
-
-// --- Permissão: pode acessar "Nova Programação" (bloquear para tray e tray+history) ---
-const canUseProgramming =
-  permissions.includes("admin") || permissions.includes("all");
-
 // --- Permissão: admin ou all (atalho para regras de bloqueio) ---
 const isAdminOrAll =
   permissions.includes("admin") || permissions.includes("all");
 
+// --- Permissões: Botões da Bandeja ---
+// Adicionar ordem: todos os perfis (tray, tray+history, all, admin)
+const canAddOrder =
+  permissions.includes("tray") ||
+  permissions.includes("history") ||
+  isAdminOrAll;
+
+// Relatório do dia: somente (tray+history, all, admin)
+const canSeeTrayReport =
+  permissions.includes("history") ||
+  isAdminOrAll;
+
+// --- Permissão: pode usar importação via mensagem padrão (botão "Adicionar Ordem") ---
+const canImportStandardForm = canAddOrder;
+
+// --- Permissão: pode acessar "Nova Programação" (bloquear para tray e tray+history) ---
+const canUseProgramming = isAdminOrAll;
+
 // --- Permissão: pode EDITAR / EXCLUIR no Histórico (tray+history NÃO pode) ---
-const canEditHistory = isAdminOrAll; // ✅ por enquanto: somente admin/all
+const canEditHistory = isAdminOrAll;
   
 
   // FORMATO DATA BR: DD/MM/YYYY
@@ -329,6 +1290,149 @@ const formatDateBR = (iso?: string) => {
   if (!y || !m || !d) return iso;
   return `${d}/${m}/${y}`; // BR: DD/MM/AAAA
 };
+
+
+// --- RELATÓRIO DO DIA (Helpers) ---
+// Normaliza strings para comparação (remove acentos + upper + trim)
+const reportStripAccents = (s = "") =>
+  s.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+const reportKey = (s?: string | null) =>
+  reportStripAccents((s ?? "").trim()).toUpperCase();
+
+// Define o que entra no relatório (ordens "abertas")
+// Obs.: aqui uso status != REALIZADA/REALIZADO. Ajuste se você tiver outros fechamentos.
+const reportIsOpenTrayItem = (t: TrayItem) => {
+  const st = reportKey(t.status);
+  return st !== "REALIZADA" && st !== "REALIZADO";
+};
+
+// Indexa todas as cidades do REGIONS para resolver:
+// cidade digitada (com/sem acento) -> { region, cityDisplay(com acento) }
+const reportBuildCityIndexFromRegions = () => {
+  const idx = new Map<string, { region: string; cityDisplay: string }>();
+
+  Object.keys(REGIONS).forEach((region) => {
+    (REGIONS[region] || []).forEach((city: string) => {
+      idx.set(reportKey(city), { region, cityDisplay: city });
+    });
+  });
+
+  return idx;
+};
+
+// Gera o objeto do relatório (agrupado por região -> cidade -> itens)
+const buildTrayReport = (items: TrayItem[]): TrayReportData => {
+  const cityIndex = reportBuildCityIndexFromRegions();
+
+  const grouped: TrayReportData["grouped"] = {};
+  const totalsPorRegiao: TrayReportData["totalsPorRegiao"] = {};
+  const totalsPorCidade: TrayReportData["totalsPorCidade"] = {};
+
+  const openItems = (items || []).filter(reportIsOpenTrayItem);
+
+  openItems.forEach((t) => {
+    const cityKey = reportKey(t.city);
+    const found = cityIndex.get(cityKey);
+
+    // ✅ Região e cidade "canônicas" (baseado no REGIONS)
+    const region = found?.region || "OUTROS";
+    const cityDisplay = found?.cityDisplay || (t.city || "").trim() || "SEM CIDADE";
+
+    const reportItem: TrayReportItem = {
+      date: t.date || "",
+      clientName: (t.clientName || "").trim(),
+      status: (t.status || "").trim(),
+      city: cityDisplay,
+      region,
+    };
+
+    grouped[region] ??= {};
+    grouped[region][cityDisplay] ??= [];
+    grouped[region][cityDisplay].push(reportItem);
+  });
+
+  // Sort por cidade: data (mais antiga primeiro), depois cliente
+  Object.keys(grouped).forEach((region) => {
+    Object.keys(grouped[region]).forEach((city) => {
+      grouped[region][city].sort((a, b) => {
+        const da = a.date || "9999-12-31";
+        const db = b.date || "9999-12-31";
+        if (da !== db) return da.localeCompare(db);
+        return (a.clientName || "").localeCompare(b.clientName || "");
+      });
+    });
+  });
+
+  // Totais por região e por cidade
+  Object.keys(grouped).forEach((region) => {
+    totalsPorRegiao[region] = 0;
+    totalsPorCidade[region] ??= {};
+
+    Object.keys(grouped[region]).forEach((city) => {
+      const count = grouped[region][city].length;
+      totalsPorCidade[region][city] = count;
+      totalsPorRegiao[region] += count;
+    });
+  });
+
+  const totalGeral = Object.values(totalsPorRegiao).reduce((acc, n) => acc + n, 0);
+
+  return {
+    generatedAt: new Date(),
+    totalGeral,
+    totalsPorRegiao,
+    totalsPorCidade,
+    grouped,
+  };
+};
+
+
+// Texto pronto para copiar (WhatsApp-friendly)
+const buildTrayReportText = (data: TrayReportData): string => {
+  const dt = data.generatedAt.toLocaleString("pt-BR");
+  const lines: string[] = [];
+
+  lines.push(`RELATÓRIO BANDEJA – ${dt}`);
+  lines.push(`TOTAL: ${data.totalGeral} ordens abertas`);
+  lines.push("");
+
+  // ordem: primeiro regiões do REGIONS, depois quaisquer outras (ex.: OUTROS)
+  const regionOrder = [
+    ...Object.keys(REGIONS),
+    ...Object.keys(data.grouped).filter((r) => !Object.keys(REGIONS).includes(r)),
+  ].filter((r, i, arr) => arr.indexOf(r) === i);
+
+  regionOrder.forEach((region) => {
+    const regTotal = data.totalsPorRegiao[region] ?? 0;
+    if (!data.grouped[region] || regTotal === 0) return;
+
+    lines.push(`${region.toUpperCase()} (${regTotal})`);
+
+    const cities = Object.keys(data.grouped[region] || {});
+    const regionCities = REGIONS[region] || [];
+
+    const cityOrder = [
+      ...regionCities.filter((c: string) => cities.includes(c)),
+      ...cities.filter((c) => !regionCities.includes(c)).sort((a, b) => a.localeCompare(b)),
+    ];
+
+    cityOrder.forEach((city) => {
+      const totalCity = data.totalsPorCidade[region]?.[city] ?? 0;
+      if (totalCity === 0) return;
+
+      lines.push(`- ${city} (${totalCity})`);
+      (data.grouped[region][city] || []).forEach((it) => {
+        lines.push(`  ${formatDateBR(it.date)} – ${it.clientName} – ${it.status}`);
+      });
+    });
+
+    lines.push("");
+  });
+
+  return lines.join("\n").trim();
+};
+
 
 
 const todayISO = () => {
@@ -359,6 +1463,9 @@ const getValueAfterKey = (lines: string[], key: string) => {
   const line = lines.find(l => re.test(l));
   return line ? line.replace(re, "$1").trim() : "";
 };
+
+
+
 const getStatus = (lines: string[]) => {
   const statusLineRe = /^\s*(STATUS(?:\s+DA\s+ORDEM)?|SOLICITAÇÃO)\s*:\s*(.*)\s*$/i;
   const cutOtherKeysRe = /\s+(CLIENTE|CIDADE|LOGIN|PLANO|ATENDENTE|ORDEM|OS|COD)\s*:\s*/i;
@@ -390,6 +1497,8 @@ const getStatus = (lines: string[]) => {
 
   return "";
 };
+
+
 
 const parseStandardMessageForTray = (raw: string) => {
   const warnings: string[] = [];
@@ -977,7 +2086,9 @@ const getCityCount = (cityName: string) => {
                      };
                  }
              });
+             
          }
+         
          updates.clients = newClients;
       } else if (updates.name !== undefined && !finalName) {
           // Fallback para garantir limpeza se undefined
@@ -1497,6 +2608,144 @@ const concluirViagemHistorico = async (viagem: Viagem) => {
     }
   };
 
+  // --- IMPRESSÃO (Relatório do Dia - Bandeja) ---
+// Escapa HTML para não quebrar a impressão (ex.: nomes com < > & etc.)
+const imprimirRelatorioBandeja = (text: string) => {
+  const w = window.open("", "_blank");
+  if (!w) return;
+
+  // Normaliza quebras e evita buracos gigantes
+  const normalized = (text || "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  // 2 primeiras linhas (você já queria em destaque)
+  const lines = normalized.split("\n");
+  const header1 = lines[0] ?? "";
+  const header2 = lines[1] ?? "";
+  const restLines = lines.slice(2);
+
+  // Detecta "REGIÃO (N)"
+  const regionRe = /^[A-ZÁÉÍÓÚÂÊÎÔÛÃÕÇ0-9\s._-]+\(\d+\)\s*$/i;
+
+  let seenCityInRegion = false;
+
+  const restHtml = restLines
+    .map((rawLine) => {
+      const line = rawLine ?? "";
+      const t = line.trim();
+
+      // linha vazia
+      if (!t) return `<div class="blank"></div>`;
+
+      // região
+      if (regionRe.test(t) && !t.startsWith("-")) {
+        seenCityInRegion = false;
+        return `<div class="region">${escapeHtml(t)}</div>`;
+      }
+
+      // cidade
+      if (t.startsWith("-")) {
+        // ✅ garante 1 respiro entre cidades dentro da mesma região
+        const spacer = seenCityInRegion ? `<div class="blank"></div>` : "";
+        seenCityInRegion = true;
+        return `${spacer}<div class="city">${escapeHtml(t)}</div>`;
+      }
+
+      // item normal
+      return `<div class="entry">${escapeHtml(t)}</div>`;
+    })
+    .join("");
+
+  w.document.write(`
+    <html>
+      <head>
+        <title>Impressão - Relatório do Dia (Bandeja)</title>
+        <style>
+          body{
+            font-family: monospace;
+            padding: 20px;
+            font-size: 12px;
+            line-height: 1.35;
+            color: #000;
+          }
+          h1{
+            margin: 0 0 10px 0;
+            font-size: 16px;
+            font-weight: 800;
+          }
+          .meta{
+            font-weight: 800;
+            margin: 0;
+            line-height: 1.35;
+          }
+          .meta + .meta{
+            margin-top: 2px;
+          }
+          .spacer{
+            height: 10px;
+          }
+
+          /* ✅ Destaque da REGIÃO */
+          .region{
+            font-weight: 900;
+            margin-top: 10px;
+            padding: 4px 0;
+            border-bottom: 1px solid #000;
+          }
+
+          /* ✅ Cidade mais forte e legível */
+          .city{
+            font-weight: 800;
+            margin-top: 6px;
+          }
+
+          /* ✅ Itens com leve recuo */
+          .entry{
+            padding-left: 18px;
+          }
+
+          /* ✅ Linha em branco controlada */
+          .blank{
+            height: 8px;
+          }
+
+          @media print{
+            body{ padding: 0; }
+          }
+        </style>
+      </head>
+      <body>
+        <h1>RELATÓRIO DO DIA (BANDEJA)</h1>
+
+        ${header1 ? `<div class="meta">${escapeHtml(header1)}</div>` : ""}
+        ${header2 ? `<div class="meta">${escapeHtml(header2)}</div>` : ""}
+
+        <div class="spacer"></div>
+
+        <div class="report">
+          ${restHtml}
+        </div>
+      </body>
+    </html>
+  `);
+
+  w.document.close();
+  w.focus();
+  w.print();
+};
+
+// helper
+const escapeHtml = (s: string) =>
+  (s || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+
+
+
+
   // Encontra o índice da próxima cidade desabilitada
   const nextCityIndex = state.cities.findIndex(c => !c.enabled);
 
@@ -1574,7 +2823,8 @@ const concluirViagemHistorico = async (viagem: Viagem) => {
   >
     <i className="fas fa-inbox"></i> Bandeja
   </button>
-           {/* Nova Programação só para ALL */}
+  
+           {/* Nova Programação para ALL */}
   {can('all') && (
     <button 
       onClick={() => setActiveTab('form')}
@@ -1588,7 +2838,7 @@ const concluirViagemHistorico = async (viagem: Viagem) => {
     </button>
   )}
 
-           {/* Histórico só para HISTORY (ou ALL, se seu can() já tratar) */}
+           {/* Histórico só para HISTORY e ALL */}
   {can('history') && (
     <button
       onClick={() => setActiveTab('history')}
@@ -2003,24 +3253,50 @@ const concluirViagemHistorico = async (viagem: Viagem) => {
                   <i className="fas fa-inbox mr-3 text-amber-500"></i> BANDEJA DE VIAGENS
                   </h2>
 
-  {/* BOTÃO ADICIONAR ORDEM */}
+{/* Ações da Bandeja (lado direito) */}
+<div className="flex items-center gap-2">
+  {/* BOTÃO ADICIONAR ORDEM (todos: tray, history, all, admin) */}
   {canImportStandardForm && (
     <button
       type="button"
       onClick={() => {
-  setImportText("");
-  setImportPreview(null);
-  setIsImportOpen(true);
-  }}
+        setImportText("");
+        setImportPreview(null);
+        setIsImportOpen(true);
+      }}
       className={`text-xs font-black uppercase px-3 py-2 rounded-lg border transition
-        ${isDarkMode ? 'bg-white/5 text-amber-300 border-white/10 hover:bg-white/10' : 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100'}
+        ${isDarkMode ? "bg-white/5 text-amber-300 border-white/10 hover:bg-white/10" : "bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100"}
       `}
       title="Colar mensagem padrão e gerar uma linha"
     >
       <i className="fas fa-paste mr-2"></i> Adicionar ordem
     </button>
   )}
+
+  {/* BOTÃO RELATÓRIO DO DIA (somente history, all, admin) */}
+  {canSeeTrayReport && (
+    <button
+      type="button"
+      onClick={() => {
+        const data = buildTrayReport(trayItems);
+        setTrayReportData(data);
+        setTrayReportText(buildTrayReportText(data));
+        setTrayReportCopied(false);
+        setIsTrayReportOpen(true);
+      }}
+      className={`text-xs font-black uppercase px-3 py-2 rounded-lg border transition
+        ${isDarkMode ? "bg-white/5 text-blue-200 border-white/10 hover:bg-white/10" : "bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100"}
+      `}
+      title="Gerar relatório atualizado da bandeja (todas as regiões)"
+    >
+      <i className="fas fa-clipboard-list mr-2"></i> Relatório do dia
+    </button>
+  )}
 </div>
+
+
+</div>
+
 
                 
                 
@@ -2275,6 +3551,7 @@ className={`py-2 px-4 rounded-lg text-xs font-bold uppercase transition-all bord
     </button>
   </div>
 </td>
+                                      {/* DENTRO DA BANDEJA - TITULOS E STATUS PARA ORDENS */}
 
                                         <td className="p-2">
                                             <input 
@@ -2490,6 +3767,50 @@ onClick={async () => {
     </div>
   </div>
 )}
+
+{/* MODAL: RELATÓRIO DO DIA (BANDEJA) */}
+{isTrayReportOpen && trayReportData && (
+  <TrayReportModal
+    // --- tema ---
+    isDarkMode={isDarkMode}
+
+    // --- dados do relatório (objeto agrupado) ---
+    data={trayReportData}
+
+    // --- texto "antigo": pode manter por compatibilidade, mas o modal vai usar reportText ---
+    // DICA: se você quiser, pode passar string vazia e remover depois
+    text={trayReportText}
+
+    // --- estado do "Copiado!" ---
+    copied={trayReportCopied}
+
+    // --- fechar modal ---
+    onClose={() => setIsTrayReportOpen(false)}
+
+    // --- copiar: agora recebe o texto pronto (reportText) ---
+    onCopy={async (txt) => {
+      try {
+        await navigator.clipboard.writeText(txt);
+        setTrayReportCopied(true);
+        setTimeout(() => setTrayReportCopied(false), 1500);
+      } catch {
+        alert("Não foi possível copiar automaticamente. Selecione o texto e copie manualmente.");
+      }
+    }}
+
+    // --- imprimir: agora recebe o texto pronto (reportText) ---
+    onPrint={(txt) => {
+      if (!txt?.trim()) return;
+      imprimirRelatorioBandeja(txt); // mantém seu método atual
+    }}
+
+    // --- formatador de data BR ---
+    formatDateBR={formatDateBR}
+  />
+)}
+
+
+
 
 
           </div>
