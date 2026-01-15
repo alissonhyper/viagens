@@ -239,7 +239,7 @@ const TrayReportModal: React.FC<TrayReportModalProps> = ({
 
 
 // 1) --- cor do badge/chip por status ---
-// Observação: aqui a gente pode "unificar" cores sem perder o status (chave) separado.
+// Observação: cores podem ser unificadas sem perder o status (key) separado.
 
 const statusStyle = (status?: string) => {
   const s = (status || "").toUpperCase();
@@ -253,16 +253,17 @@ const statusStyle = (status?: string) => {
     ? "bg-gray-500/15 text-gray-200 border-gray-400/25"
     : "bg-gray-100 text-gray-700 border-gray-200";
 
-  // Azul/Lilás unificado (Ampliação / Rede / Orçamento)
+  // Azul/Lilás unificado (Ampliação / Rede / Orçamento / Config. Equip. / Sinal Alto)
   const pillBlueUnified = isDarkMode
     ? "bg-indigo-500/15 text-indigo-200 border-indigo-400/25"
     : "bg-indigo-50 text-indigo-700 border-indigo-200";
 
+  // Verde unificado (Cliente novo / Novo acesso / Reativação)
   const pillGreen = isDarkMode
     ? "bg-emerald-500/15 text-emerald-200 border-emerald-400/25"
     : "bg-emerald-50 text-emerald-700 border-emerald-200";
 
-  // Verde “diferente” (Mudança de endereço) – próximo ao verde, mas não igual
+  // Verde “diferente” (Mudança de endereço)
   const pillTeal = isDarkMode
     ? "bg-teal-500/15 text-teal-200 border-teal-400/25"
     : "bg-teal-50 text-teal-800 border-teal-200";
@@ -272,12 +273,13 @@ const statusStyle = (status?: string) => {
     ? "bg-orange-500/15 text-orange-200 border-orange-400/25"
     : "bg-orange-50 text-orange-700 border-orange-200";
 
-    
- // ORDEM (priority menor = aparece primeiro):
+  // ORDEM (priority menor = aparece primeiro):
   // 1) Sem internet
   // 2) Mudança de endereço
   // 3) Cliente novo
-  // 10.. = “meio” (orcamento/ampliacao/rede)
+  // 4) Novo acesso
+  // 5) Reativação
+  // 10.. = “meio” (ampliacao/orcamento/rede/config_equip/sinal_alto)
   // 20.. = “meio” (lentidao/quedas)
   // 96 = Outros (fim do bloco, antes dos 3 últimos)
   // 97/98/99 = 3 últimos fixos: assinatura, cancelamento, cobrança
@@ -293,7 +295,7 @@ const statusStyle = (status?: string) => {
     };
   }
 
-  // 2) Cliente novo (CRÍTICO) 
+  // 2) Cliente novo (CRÍTICO)
   if (s.includes("CLIENTE NOVO")) {
     return {
       key: "cliente_novo",
@@ -304,7 +306,7 @@ const statusStyle = (status?: string) => {
     };
   }
 
-    // 3) Mudança de endereço (CRÍTICO) 
+  // 3) Mudança de endereço (CRÍTICO)
   // pega com/sem acento e variações
   if (
     s.includes("MUDAN") &&
@@ -319,7 +321,31 @@ const statusStyle = (status?: string) => {
     };
   }
 
+  // 4) Novo acesso (mesmo “peso” do Cliente novo)
+  if (s.includes("NOVO ACESSO") || s.includes("ACESSO NOVO")) {
+    return {
+      key: "novo_acesso",
+      label: "Novo acesso",
+      priority: 4,
+      dot: "bg-emerald-400",
+      pill: pillGreen,
+    };
+  }
+
+  // 5) Reativação (mesmo “peso” do Cliente novo)
+  // cobre REATIVAÇÃO / REATIVACAO / variações
+  if (s.includes("REATIVA")) {
+    return {
+      key: "reativacao",
+      label: "Reativação",
+      priority: 5,
+      dot: "bg-emerald-400",
+      pill: pillGreen,
+    };
+  }
+
   // 4) Grupo azul/lilás unificado (cor igual, mas status separados)
+
   // Ampliação
   if (s.includes("AMPLIA")) {
     return {
@@ -331,8 +357,8 @@ const statusStyle = (status?: string) => {
     };
   }
 
-    // Orçamento
-    if (s.includes("ORÇAMENTO") || s.includes("ORCAMENTO")) {
+  // Orçamento
+  if (s.includes("ORÇAMENTO") || s.includes("ORCAMENTO")) {
     return {
       key: "orcamento",
       label: "Orçamento",
@@ -342,7 +368,7 @@ const statusStyle = (status?: string) => {
     };
   }
 
-  // "REDE" ou Serviço de Rede, pode aparecer em outros textos, mas aqui está ok
+  // Rede / Serviço de rede
   if (
     s.includes("SERVIÇO DE REDE") ||
     s.includes("SERVICO DE REDE") ||
@@ -352,6 +378,29 @@ const statusStyle = (status?: string) => {
       key: "rede",
       label: "Rede",
       priority: 12,
+      dot: "bg-indigo-400",
+      pill: pillBlueUnified,
+    };
+  }
+
+  // Configuração de equipamento (abaixo de orçamento/rede)
+  // cobre CONFIGURAÇÃO / CONFIGURACAO
+  if (s.includes("CONFIGURA") && s.includes("EQUIP")) {
+    return {
+      key: "config_equip",
+      label: "Config. equip.",
+      priority: 13,
+      dot: "bg-indigo-400",
+      pill: pillBlueUnified,
+    };
+  }
+
+  // Sinal alto (você não especificou, então deixei no grupo azul)
+  if (s.includes("SINAL ALTO")) {
+    return {
+      key: "sinal_alto",
+      label: "Sinal alto",
+      priority: 14,
       dot: "bg-indigo-400",
       pill: pillBlueUnified,
     };
@@ -379,7 +428,6 @@ const statusStyle = (status?: string) => {
   }
 
   // 6) Outros (fim do bloco “normal”, ANTES dos 3 últimos fixos)
-  // Deixa ele alto para ficar perto do fim, mas não maior que os 3 últimos.
   const outros = () => ({
     key: "outros",
     label: "Outros",
@@ -421,9 +469,10 @@ const statusStyle = (status?: string) => {
     };
   }
 
-  // padrão: realmente não mapeou nada
+  // padrão
   return outros();
 };
+
 
 
 // Tema (pill/dot/row) baseado no statusStyle (fonte única de cores)
@@ -532,20 +581,35 @@ const setOnlyBuckets = (keysToEnable: string[]) => {
 
 
 // ✅ Críticos: Sem internet + Mudança de endereço + Cliente Novo
-const criticalKeys = ["sem_internet", "mudanca_endereco", "cliente_novo"];
+const criticalKeys = [
+  "sem_internet",
+  "mudanca_endereco",
+  "cliente_novo",
+  "novo_acesso",
+  "reativacao",
+];
 
-// ✅ Leves: resto do operacional
 const lightKeys = [
-  "cancelamento",
-  "assinatura",
-  "cobranca",
-  "orcamento",
+  // azul
   "ampliacao",
+  "orcamento",
   "rede",
+  "config_equip",
+  "sinal_alto",
+
+  // laranja
   "lentidao",
   "quedas",
+
+  // finais (menos importantes)
+  "assinatura",
+  "cancelamento",
+  "cobranca",
+
+  // o que sobrar
   "outros",
 ];
+
 
 
 const enableOnlyCritical = () => setOnlyBuckets(criticalKeys);
@@ -580,37 +644,55 @@ const dateToMs = (d?: string) => {
 
 // 7) prepareItems (usa statusStyle + statusOn + sortMode)
 const prepareItems = (items: TrayReportItem[]) => {
+  // 7.1) Filtra pelos chips ativos (statusOn)
   const filtered = (items || []).filter((it) => {
     const meta = statusStyle(it.status);
     return statusOn[meta.key] !== false;
   });
 
+  // 7.2) Ordenação por data (usa dateToMs pra ficar consistente)
+  const byDateAsc = (a: TrayReportItem, b: TrayReportItem) =>
+    dateToMs(a.date) - dateToMs(b.date);
 
-const byDateAsc = (a: TrayReportItem, b: TrayReportItem) => dateToMs(a.date) - dateToMs(b.date);
+  // 7.3) Ordenação por status (prioridade + label)
+  const byStatus = (a: TrayReportItem, b: TrayReportItem) => {
+    const sa = statusStyle(a.status);
+    const sb = statusStyle(b.status);
+    if (sa.priority !== sb.priority) return sa.priority - sb.priority;
+    return (sa.label || "").localeCompare(sb.label || "", "pt-BR", { sensitivity: "base" });
+  };
 
+  // 7.4) Ordenação por cliente (desempate)
+  const byClient = (a: TrayReportItem, b: TrayReportItem) =>
+    (a.clientName || "").localeCompare(b.clientName || "", "pt-BR", { sensitivity: "base" });
 
-const byStatus = (a: TrayReportItem, b: TrayReportItem) => {
-  const sa = statusStyle(a.status);
-  const sb = statusStyle(b.status);
-  if (sa.priority !== sb.priority) return sa.priority - sb.priority;
-  return (sa.label || "").localeCompare(sb.label || "", "pt-BR", { sensitivity: "base" });
+  // 7.5) ✅ Ordenação por NOME DO STATUS (label do statusStyle)
+  const byStatusNameAsc = (a: TrayReportItem, b: TrayReportItem) => {
+    const la = statusStyle(a.status).label || "";
+    const lb = statusStyle(b.status).label || "";
+    return la.localeCompare(lb, "pt-BR", { sensitivity: "base" });
+  };
+
+  const byStatusNameDesc = (a: TrayReportItem, b: TrayReportItem) =>
+    byStatusNameAsc(b, a);
+
+  // 7.6) Aplica o sortMode atual
+  return filtered.slice().sort((a, b) => {
+    // 📅 DATA: data primeiro, depois prioridade do status, depois cliente
+    if (sortMode === "dateAsc")  return byDateAsc(a, b) || byStatus(a, b) || byClient(a, b);
+    if (sortMode === "dateDesc") return byDateAsc(b, a) || byStatus(a, b) || byClient(a, b);
+
+    // 🔤 STATUS (A–Z / Z–A): nome do status primeiro, depois data, depois cliente
+    if (sortMode === "nameAsc")  return byStatusNameAsc(a, b) || byDateAsc(a, b) || byClient(a, b);
+    return byStatusNameDesc(a, b) || byDateAsc(a, b) || byClient(a, b);
+  });
 };
 
-const byClient = (a: TrayReportItem, b: TrayReportItem) =>
-  (a.clientName || "").localeCompare(b.clientName || "", "pt-BR", { sensitivity: "base" });
 
 
-return filtered.slice().sort((a, b) => {
-  if (sortMode === "dateAsc")  return byDateAsc(a, b) || byStatus(a, b) || byClient(a, b);
-  if (sortMode === "dateDesc") return byDateAsc(b, a) || byStatus(a, b) || byClient(a, b);
-  if (sortMode === "nameAsc")  return byClient(a, b) || byStatus(a, b) || byDateAsc(a, b);
-  // nameDesc
-  return byClient(b, a) || byStatus(a, b) || byDateAsc(a, b);
-});
-};
-
+  // indica se o modo atual é data ou status (A–Z / Z–A)
   const isDate = sortMode === "dateAsc" || sortMode === "dateDesc";
-  const isName = sortMode === "nameAsc" || sortMode === "nameDesc";
+  const isName = sortMode === "nameAsc" || sortMode === "nameDesc"; // “name” = status
 
   // direção atual das setas
   const dateDir: "asc" | "desc" = sortMode === "dateDesc" ? "desc" : "asc";
@@ -817,24 +899,24 @@ return filtered.slice().sort((a, b) => {
     <i className={`fas ${dateDir === "asc" ? "fa-arrow-up" : "fa-arrow-down"} text-[10px]`} />
   </button>
 
-  {/* Botão NOME: alterna ↑/↓ */}
-  <button
-    type="button"
-    onClick={toggleNameSort}
-    className={`px-3 py-1.5 rounded-lg text-[11px] font-black uppercase border transition inline-flex items-center gap-2 ${
-      isName
-        ? isDarkMode
-          ? "bg-emerald-500/15 text-emerald-200 border-emerald-400/25"
-          : "bg-emerald-50 text-emerald-700 border-emerald-200"
-        : isDarkMode
-          ? "bg-white/5 text-white/70 border-white/10 hover:bg-white/10"
-          : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50"
-    }`}
-    title="Ordenar por nome"
-  >
-    Nome
-    <i className={`fas ${nameDir === "asc" ? "fa-arrow-up" : "fa-arrow-down"} text-[10px]`} />
-  </button>
+{/* Botão STATUS: alterna ↑/↓ */}
+<button
+  type="button"
+  onClick={toggleNameSort}
+  className={`px-3 py-1.5 rounded-lg text-[11px] font-black uppercase border transition inline-flex items-center gap-2 ${
+    isName
+      ? isDarkMode
+        ? "bg-emerald-500/15 text-emerald-200 border-emerald-400/25"
+        : "bg-emerald-50 text-emerald-700 border-emerald-200"
+      : isDarkMode
+        ? "bg-white/5 text-white/70 border-white/10 hover:bg-white/10"
+        : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50"
+  }`}
+  title="Ordenar por status (A–Z / Z–A)"
+>
+  Status
+  <i className={`fas ${nameDir === "asc" ? "fa-arrow-up" : "fa-arrow-down"} text-[10px]`} />
+</button>
 </div>
 </div>
 
