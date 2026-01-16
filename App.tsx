@@ -68,11 +68,18 @@ const gerarTextoRelatorio = (viagem: Viagem): string => {
   const nomesCidades = cidadesHabilitadas.map(c => c.name);
   const teamMembers = [state.technician, state.assistant].filter(Boolean);
 
+
+
   let text = `FECHAMENTO DA VIAGEM - ${diaSemana} (${dataFormatada})\n`;
   text += `----------------------------------------------------------------------------\n`;
   text += `🔧 EQUIPE: ${listaComE(teamMembers) || "NÃO INFORMADA"}\n`;
   text += `📍 DESIGNAÇÃO: ${listaComE(nomesCidades) || "A DEFINIR"} – ${listaComE([...state.services]) || "A DEFINIR"}\n`;
-  text += `🕗 INÍCIO: ${state.startTime}\n\n`;
+  text += `🕗 INÍCIO: ${state.startTime}\n`;
+  if (viagem.arrivalTime) {
+  text += `🏁 CHEGADA: ${viagem.arrivalTime}\n`;
+  }
+  text += `\n`;
+
 
   cidadesHabilitadas.forEach((city) => {
       text += `----------------------------------------------------------------------------\n`;
@@ -772,6 +779,7 @@ const prepareItems = (items: TrayReportItem[]) => {
 
 
 
+
 // "ANTES DO RETURN"
 
 
@@ -1468,6 +1476,41 @@ const buildTrayReport = (items: TrayItem[]): TrayReportData => {
     grouped,
   };
 };
+
+// --- SALVAR HORÁRIO DE CHEGADA (Viagem) ---
+const [arrivalDraftById, setArrivalDraftById] = useState<Record<string, string>>({});
+const [arrivalSavingById, setArrivalSavingById] = useState<Record<string, boolean>>({});
+
+const isValidHHmm = (value: string) => {
+  if (!/^\d{2}:\d{2}$/.test(value)) return false;
+  const [hh, mm] = value.split(":").map(Number);
+  return hh >= 0 && hh <= 23 && mm >= 0 && mm <= 59;
+};
+
+const salvarChegadaSafe = async (viagem: Viagem) => {
+  const id = viagem.id;
+  if (!id) return;
+
+  const raw = (arrivalDraftById[id] ?? viagem.arrivalTime ?? "").trim();
+  const next: string | null = raw === "" ? null : raw;
+
+  if (next !== null && !isValidHHmm(next)) {
+    alert("Horário inválido. Use HH:mm (ex.: 14:10).");
+    return;
+  }
+
+  try {
+    setArrivalSavingById((p) => ({ ...p, [id]: true }));
+    await firestoreService.updateViagem(id, { arrivalTime: next });
+    alert("Chegada salva com sucesso!");
+  } catch (e) {
+    console.error(e);
+    alert("Falha ao salvar a chegada.");
+  } finally {
+    setArrivalSavingById((p) => ({ ...p, [id]: false }));
+  }
+};
+
 
 
 // Texto pronto para copiar (WhatsApp-friendly)
@@ -3942,6 +3985,10 @@ onClick={async () => {
                 <div className="grid grid-cols-1 gap-4">
                   {currentHistoryPage.map((viagem) => {
                     const isFinalized = viagem.feedbacks && viagem.feedbacks.length > 0;
+                    // Apenas ALL/ADMIN podem editar a chegada (mesma regra do editar/excluir no histórico)
+const canEditArrival = canEditHistory;
+                    const arrivalDraft = viagem.id ? (arrivalDraftById[viagem.id] ?? (viagem.arrivalTime ?? "")) : "";
+                    const arrivalChanged = arrivalDraft !== (viagem.arrivalTime ?? "");
                     const statusColor = isFinalized ? 'border-green-500 dark:border-green-500' // FINALIZADA (Verde)
                                                    : 'border-amber-500 dark:border-amber-500'; // ABERTA (Âmbar/Laranja)
                     const isEditing = editingTripId === viagem.id;
@@ -3967,6 +4014,66 @@ onClick={async () => {
                           </div>
                           <h3 className={`font-black text-base group-hover:text-blue-700 transition-colors uppercase ${isDarkMode ? 'text-white' : 'text-gray-800'}`}>{displayTitle}</h3>
                           <p className="text-xs text-gray-500 font-medium italic">{viagem.state.services.join(', ') || 'Sem serviços definidos'}</p>
+
+{isFinalized ? (
+  <div className="mt-2 flex items-center gap-2 flex-wrap">
+    {/* Label */}
+    <span className="text-[10px] font-black uppercase tracking-wider text-gray-400">
+      Chegada:
+    </span>
+
+    {/* Se pode editar (ALL/ADMIN), mostra input; senão, mostra apenas leitura */}
+    {canEditArrival ? (
+      <input
+        type="time"
+        value={arrivalDraftById[viagem.id!] ?? (viagem.arrivalTime ?? "")}
+        onChange={(e) =>
+          // Atualiza apenas o draft local (não salva no Firestore ainda)
+          setArrivalDraftById((p) => ({ ...p, [viagem.id!]: e.target.value }))
+        }
+        className={`px-2 py-1 rounded-md border text-xs font-black uppercase ${themeInput}`}
+        title="Editar horário de chegada"
+      />
+    ) : (
+      <span
+        className={`text-xs font-black uppercase px-2 py-1 rounded-md border
+          ${isDarkMode ? "border-gray-700 text-gray-300 bg-[#1f2937]" : "border-gray-200 text-gray-600 bg-gray-50"}
+        `}
+        title="Somente ALL/ADMIN pode editar"
+      >
+        {viagem.arrivalTime ?? "--:--"}
+      </span>
+    )}
+
+    {/* Botão de salvar só aparece quando:
+        - usuário tem permissão (ALL/ADMIN)
+        - houve alteração (arrivalChanged)
+    */}
+    {canEditArrival && arrivalChanged ? (
+      <button
+        onClick={() => salvarChegadaSafe(viagem)}
+        disabled={!!arrivalSavingById[viagem.id!]}
+        className={`h-9 w-9 rounded-md border flex items-center justify-center transition-all
+          ${
+            arrivalSavingById[viagem.id!]
+              ? "opacity-60 cursor-not-allowed"
+              : "hover:bg-emerald-600 hover:text-white hover:border-emerald-600"
+          }
+          ${
+            isDarkMode
+              ? "border-gray-600 text-emerald-300 bg-[#2D3748]"
+              : "border-gray-200 text-emerald-700 bg-white"
+          }
+        `}
+        title={arrivalSavingById[viagem.id!] ? "Salvando..." : "Salvar chegada"}
+      >
+        <i className={`fas ${arrivalSavingById[viagem.id!] ? "fa-spinner fa-spin" : "fa-check"}`}></i>
+      </button>
+    ) : null}
+  </div>
+) : null}
+
+
                         </div>
                             
   <div className="flex flex-wrap gap-2">

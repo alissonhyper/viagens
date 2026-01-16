@@ -32,6 +32,9 @@ export interface Viagem {
   status: 'PENDENTE' | 'REALIZADA' | string;
 
   trayOrder?: number;        // ORDEM MANUAL DA BANDEJA
+
+    // --- CHECKOUT (CHEGADA) ---
+  arrivalTime?: string | null; // "HH:mm" (ex.: "18:10")
 }
 
 // Define o payload para atualização (sem metadados)
@@ -47,6 +50,10 @@ export interface ViagemUpdatePayload {
     cidade?: string;
     status?: string;       // ou 'PENDENTE' | 'REALIZADA' | string
     trayOrder?: number;
+
+        // --- CHECKOUT (CHEGADA) ---
+    arrivalTime?: string | null; // "HH:mm"
+
     // Adicione aqui qualquer outra propriedade que você possa atualizar
 }
 
