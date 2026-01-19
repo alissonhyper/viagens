@@ -66,10 +66,10 @@ export const INITIAL_STATE = {
   }))
 };
 
-// --- NOVAS CONSTANTES DA BANDEJA ---
+// --- REGIÕES E CIDADES ---
 
 export const REGIONS: Record<string, string[]> = {
-  'Mata Verde': ['Mata Verde', 'Sapata'],
+  'Mata Verde': ['Mata Verde', 'Bandeira', 'Sapata'],
   'Palmópolis': ['Palmópolis', 'Vila Formosa', 'Igrejinha'],
   'Jacinto': ['Jacinto', 'Santo Antônio', 'Jaguarão', 'Bom Jardim', 'Salto da Divisa', 'Santa Maria'],
   'Jequitinhonha': ['Jequitinhonha', 'Joaíma']

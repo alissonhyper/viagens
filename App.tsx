@@ -42,6 +42,7 @@ const ATTENDANTS = [
   'KEVEN',
   'AMILE',
   'RAYSSA',
+  'YASMIN',
   'HÉVILA'
 ];
 
