@@ -1230,7 +1230,7 @@ const App: React.FC = () => {
 
   // NOVO: filtro de período do histórico (em dias)
   // 90 = padrão (recomendado). 9999 = "Tudo"
-  const [periodDays, setPeriodDays] = useState<30 | 90 | 180 | 365 | 9999>(90);
+  const [periodDays, setPeriodDays] = useState<30 | 90 | 180 | 365 | 9999>(30);
   
 // HISTÓRICO EM TEMPO REAL (VIAGENS)
 // Agora filtra no Firestore por período, evitando carregar viagens antigas.
