@@ -114,26 +114,50 @@ const removeUndefinedDeep = (value: any): any => {
 
 export const firestoreService = { 
 
-  // 1. BUSCAR TODAS AS VIAGENS (COLABORATIVO)
-  // Usa o 'onSnapshot' para atualizar em tempo real
-  subscribeToViagens: 
-    (callback: (viagens: Viagem[]) => void, 
-    errorCallback: (error: firebase.firestore.FirestoreError) => void // <-- NOVO ARGUMENTO TIPADO
-  ) => {
-    
-    // Referência à coleção principal
-    const viagensRef = db.collection('viagens');
+// 1. BUSCAR TODAS AS VIAGENS (COLABORATIVO)
+// Usa o 'onSnapshot' para atualizar em tempo real
+subscribeToViagens: (
+  callback: (viagens: Viagem[]) => void,
+  errorCallback: (error: firebase.firestore.FirestoreError) => void,
+  opts?: { days?: number } // ✅ NOVO: opções (período)
+) => {
+  const viagensRef = db.collection('viagens');
 
-    // Escuta em tempo real: todas as alterações nesta coleção serão enviadas para o callback
-    return viagensRef.orderBy('data_criacao', 'desc').onSnapshot(snapshot => {
-      const viagens: Viagem[] = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as Viagem[]; // Força a tipagem
+  // helper: Date -> "yyyy-mm-dd" (mesmo formato do state.date)
+  const toYmd = (d: Date) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  };
 
-      callback(viagens);
-    }, errorCallback);
-    },
+  let query: firebase.firestore.Query = viagensRef;
+
+  // ✅ Se veio days e não é "Tudo", aplica filtro por período no Firestore
+  if (opts?.days && opts.days > 0 && opts.days !== 9999) {
+    const cutoff = new Date();
+    cutoff.setHours(0, 0, 0, 0);
+    cutoff.setDate(cutoff.getDate() - opts.days);
+
+    const cutoffStr = toYmd(cutoff);
+
+    // Range query (>=) exige orderBy no mesmo campo do filtro
+    query = query.where("state.date", ">=", cutoffStr).orderBy("state.date", "desc");
+  } else {
+    // "Tudo" (ou sem opts): mantém ordenação por data
+    query = query.orderBy("state.date", "desc");
+  }
+
+  return query.onSnapshot(snapshot => {
+    const viagens: Viagem[] = snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    })) as Viagem[];
+
+    callback(viagens);
+  }, errorCallback);
+},
+
 
 // 2. ADICIONAR UMA NOVA VIAGEM
 // Usa ViagemUpdatePayload, que é a Viagem completa menos os metadados

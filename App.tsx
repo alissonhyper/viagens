@@ -1228,21 +1228,31 @@ const App: React.FC = () => {
   // Histórico de viagens
   const [history, setHistory] = useState<Viagem[]>([]);  
 
+  // NOVO: filtro de período do histórico (em dias)
+  // 90 = padrão (recomendado). 9999 = "Tudo"
+  const [periodDays, setPeriodDays] = useState<30 | 90 | 180 | 365 | 9999>(90);
   
 // HISTÓRICO EM TEMPO REAL (VIAGENS)
+// Agora filtra no Firestore por período, evitando carregar viagens antigas.
 useEffect(() => {
   if (!currentUser) return;
+
+  // ✅ Se for "Tudo" (9999), não manda filtro nenhum
+  const opts = periodDays === 9999 ? undefined : { days: periodDays };
 
   const unsubscribe = firestoreService.subscribeToViagens(
     (viagens) => {
       setHistory(viagens);
       console.log("SNAPSHOT -> viagens:", viagens.length);
     },
-    (err) => console.error("Erro subscribeToViagens:", err)
+    (err) => console.error("Erro subscribeToViagens:", err),
+    opts
   );
 
   return () => unsubscribe();
-}, [currentUser]);
+}, [currentUser, periodDays]);
+
+
 
 // BANDEJA EM TEMPO REAL (COLEÇÃO "bandeja")
 useEffect(() => {
@@ -1736,6 +1746,7 @@ const importHasBlockingErrors =
   const [statusFilter, setStatusFilter] = useState<'all' | 'open' | 'finalized'>('all');
   const [currentPage, setCurrentPage] = useState(1);
 
+
   // Estado para o Modo Escuro
   const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
     // 1. Tenta buscar o valor salvo no localStorage usando a chave CORRETA
@@ -1825,37 +1836,35 @@ useEffect(() => {
     localStorage.setItem('prog_viagem_theme', isDarkMode ? 'dark' : 'light');
   }, [isDarkMode]);
 
-  // Resetar página quando mudar filtros
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [searchTerm, statusFilter]);
 
-// App.tsx (Bloco useEffect corrigido)
 
-// Carregar dados de Viagens do Firestore em tempo real
+// Carregar dados de Viagens do Firestore em tempo real (com filtro por período)
 useEffect(() => {
-    if (currentUser) {
-        
-        // 1. Função de callback para SUCESSO
-        const handleNewViagens = (viagens: Viagem[]) => {
-            // O setHistory já está tipado como Viagem[], então o TypeScript aceita
-            setHistory(viagens); 
-        };
+  if (!currentUser) return;
 
-        // 2. Função de callback para ERRO
-        const handleError = (error: any) => {
-            console.error("Erro ao carregar histórico do Firestore:", error);
-        };
+  // Sucesso
+  const handleNewViagens = (viagens: Viagem[]) => {
+    setHistory(viagens);
+  };
 
-        // 🛑 CORREÇÃO: Chamada e armazenamento da função unsubscribe
-        const unsubscribe = firestoreService.subscribeToViagens(
-            handleNewViagens, 
-            handleError
-        ); 
+  // Erro
+  const handleError = (error: any) => {
+    console.error("Erro ao carregar histórico do Firestore:", error);
+  };
 
-        return () => unsubscribe();
-    }
-}, [currentUser]); // Depende do currentUser estar disponível
+  // ✅ Se for "Tudo", não manda filtro nenhum
+  const opts = periodDays === 9999 ? undefined : { days: periodDays };
+
+  // ✅ Agora manda o período para o subscribe (quando houver)
+  const unsubscribe = firestoreService.subscribeToViagens(
+    handleNewViagens,
+    handleError,
+    opts
+  );
+
+  return () => unsubscribe();
+}, [currentUser, periodDays]); // ✅ re-subscreve ao trocar o período
+
 
   // --- VERIFICAÇÃO DE LOGIN ---
   if (loading) {
@@ -2484,48 +2493,67 @@ const concluirViagemHistorico = async (viagem: Viagem) => {
     }
 };
 
-  // --- LÓGICA DE FILTRAGEM E PAGINAÇÃO ---
 
-  const getFilteredHistory = () => {
-    return history.filter(viagem => {
-      // 1. Filtro por Status
-      const isFinalized = viagem.feedbacks && viagem.feedbacks.length > 0;
-      if (statusFilter === 'open' && isFinalized) return false;
-      if (statusFilter === 'finalized' && !isFinalized) return false;
 
-      // 2. Filtro de Busca (Search)
-      if (searchTerm.trim()) {
-        const term = searchTerm.toLowerCase();
-        
-        const dataFormatada = formatarData(viagem.state.date).toLowerCase();
-        const tecnico = (viagem.state.technician || "").toLowerCase();
-        const assistente = (viagem.state.assistant || "").toLowerCase();
-        
-        // Verifica cidades
-        const cidades = viagem.state.cities
-          .filter(c => c.enabled && c.name)
-          .map(c => c.name.toLowerCase())
-          .join(" ");
+// --- LÓGICA DE FILTRAGEM E PAGINAÇÃO ---
 
-        const match = 
-          dataFormatada.includes(term) ||
-          tecnico.includes(term) ||
-          assistente.includes(term) ||
-          cidades.includes(term);
+const getFilteredHistory = () => {
+  // NOVO: calcula a data limite para ocultar viagens antigas
+  // Se periodDays = 9999, significa "Tudo" (não filtra por data)
+  const cutoff = new Date();
+  if (periodDays !== 9999) cutoff.setDate(cutoff.getDate() - periodDays);
 
-        if (!match) return false;
-      }
-
-      return true;
-    });
+  // Função auxiliar: viagem.state.date é "yyyy-mm-dd"
+  const isOnOrAfterCutoff = (dateStr: string) => {
+    if (periodDays === 9999) return true;
+    const d = new Date(`${dateStr}T00:00:00`);
+    return d >= cutoff;
   };
 
-  const filteredHistory = getFilteredHistory();
-  const totalPages = Math.ceil(filteredHistory.length / ITEMS_PER_PAGE);
-  const currentHistoryPage = filteredHistory.slice(
-    (currentPage - 1) * ITEMS_PER_PAGE, 
-    currentPage * ITEMS_PER_PAGE
-  );
+  return history.filter((viagem) => {
+    // 0) NOVO: Filtro por período (oculta antigas por padrão)
+    if (!isOnOrAfterCutoff(viagem.state.date)) return false;
+
+    // 1) Filtro por Status
+    const isFinalized = viagem.feedbacks && viagem.feedbacks.length > 0;
+    if (statusFilter === 'open' && isFinalized) return false;
+    if (statusFilter === 'finalized' && !isFinalized) return false;
+
+    // 2) Filtro de Busca (Search)
+    if (searchTerm.trim()) {
+      const term = searchTerm.toLowerCase();
+
+      const dataFormatada = formatarData(viagem.state.date).toLowerCase();
+      const tecnico = (viagem.state.technician || "").toLowerCase();
+      const assistente = (viagem.state.assistant || "").toLowerCase();
+
+      // Verifica cidades
+      const cidades = viagem.state.cities
+        .filter(c => c.enabled && c.name)
+        .map(c => c.name.toLowerCase())
+        .join(" ");
+
+      const match =
+        dataFormatada.includes(term) ||
+        tecnico.includes(term) ||
+        assistente.includes(term) ||
+        cidades.includes(term);
+
+      if (!match) return false;
+    }
+
+    return true;
+  });
+};
+
+const filteredHistory = getFilteredHistory();
+const totalPages = Math.ceil(filteredHistory.length / ITEMS_PER_PAGE);
+const currentHistoryPage = filteredHistory.slice(
+  (currentPage - 1) * ITEMS_PER_PAGE,
+  currentPage * ITEMS_PER_PAGE
+);
+
+
 
   // --- GERAÇÃO DE TEXTO E RELATÓRIOS ---
 
@@ -3949,7 +3977,7 @@ onClick={async () => {
                 <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">{history.length} SALVAS</span> 
               </div>
                 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
                 <div className="md:col-span-2 relative">
                     <input 
                     type="text" 
@@ -3971,8 +3999,26 @@ onClick={async () => {
                     <option value="finalized" className={isDarkMode ? 'bg-[#4A5568] text-white' : ''}>Finalizadas (Fechadas)</option>
                   </select>
                 </div>
-              </div>
+
+  {/* ✅ NOVO: Select de período (4ª coluna) */}
+    <div>
+    <select
+      value={periodDays}
+      onChange={(e) => setPeriodDays(Number(e.target.value) as 30 | 90 | 180 | 365 | 9999)}
+      className={`w-full py-3 px-4 rounded-lg border outline-none text-sm font-bold uppercase ${themeInput}`}
+      title="Período exibido no histórico"
+    >
+      <option value={30} className={isDarkMode ? 'bg-[#4A5568] text-white' : ''}>Últimos 30 dias</option>
+      <option value={90} className={isDarkMode ? 'bg-[#4A5568] text-white' : ''}>Últimos 90 dias</option>
+      <option value={180} className={isDarkMode ? 'bg-[#4A5568] text-white' : ''}>Últimos 180 dias</option>
+      <option value={365} className={isDarkMode ? 'bg-[#4A5568] text-white' : ''}>Último 1 ano</option>
+      <option value={9999} className={isDarkMode ? 'bg-[#4A5568] text-white' : ''}>Tudo</option>
+    </select>
+    </div>
             </div>
+            </div>
+
+            
 
             {/* 🛑 AQUI ESTÁ O MAP QUE VOCÊ QUERIA */}
             {filteredHistory.length === 0 ? (

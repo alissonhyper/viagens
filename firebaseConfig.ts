@@ -1,40 +1,43 @@
-import firebase from 'firebase/compat/app'; // Força o uso do módulo de compatibilidade
-// E adicione estas para garantir o reconhecimento dos serviços:
-import 'firebase/compat/firestore';
-import 'firebase/compat/auth';
-import 'firebase/storage'; 
+import firebase from "firebase/compat/app";
+import "firebase/compat/firestore";
+import "firebase/compat/auth";
+import "firebase/compat/storage"; // ✅ use compat também
 
 const firebaseConfig = {
-    apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-    authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-    projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-    storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-    messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-    appId: import.meta.env.VITE_FIREBASE_APP_ID
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
 };
 
-// Initialize Firebase
-let app;
+// ✅ Cache global para não recriar no HMR do Vite
+const g = globalThis as any;
 
-// Lógica robusta de inicialização para evitar o erro 'length'
-if (!(firebase as any).apps || !(firebase as any).apps.length) { 
-  app = firebase.initializeApp(firebaseConfig);
-} else {
-  // CORREÇÃO: Força o objeto 'firebase' a ser 'any' aqui para resolver o erro 'Property app does not exist'
-  app = (firebase as any).app();  
+// App singleton
+export const app =
+  g.__fbApp ??
+  (g.__fbApp = firebase.apps.length ? firebase.app() : firebase.initializeApp(firebaseConfig));
+
+// Firestore singleton
+export const db =
+  g.__fbDb ?? (g.__fbDb = app.firestore());
+
+// ✅ Aplica settings só 1 vez (evita warning por reexecução)
+if (!g.__fbDbSettingsApplied) {
+  db.settings({ ignoreUndefinedProperties: true });
+  g.__fbDbSettingsApplied = true;
 }
 
-// CORREÇÃO: Força a variável 'app' a ser 'any' para aceitar .firestore() e .auth()
-app = app as any;
+// Auth singleton
+export const auth =
+  g.__fbAuth ?? (g.__fbAuth = app.auth());
 
-// Initialize Firestore (Banco de Dados)
-export const db = firebase.firestore();
+auth.languageCode = "pt-BR";
 
-db.settings({ ignoreUndefinedProperties: true });
+// Storage singleton
+export const storage =
+  g.__fbStorage ?? (g.__fbStorage = app.storage());
 
-// Initialize Autenticação
-export const auth = firebase.auth();
-auth.languageCode = 'pt-BR';
-
-// Exportar o app para outros serviços
 export default app;
