@@ -2640,6 +2640,23 @@ const currentHistoryPage = filteredHistory.slice(
   setIsEncerramentoVisible(true);
 };
 
+// ✅ CONFIRMAÇÃO antes de executar ação destrutiva (remove da bandeja e salva no histórico)
+const confirmarFinalizarEGerarRelatorio = async () => {
+  const ok = window.confirm(
+    "CONFIRMAR ENCERRAMENTO?\n\n" +
+    "Ao confirmar, o sistema irá:\n" +
+    "• Salvar a viagem no histórico\n" +
+    "• Remover da bandeja as ordens processadas\n" +
+    "• Resetar o formulário da programação\n\n" +
+    "Essa ação não pode ser desfeita."
+  );
+
+  if (!ok) return; // ❌ Cancelou
+
+  await finalizarEGerarRelatorio(); // ✅ Executa o fluxo atual
+};
+
+
   const finalizarEGerarRelatorio = async () => {
     // 1. Gera o Texto
     const diaSemana = getDiaSemana(state.date);
@@ -3368,7 +3385,7 @@ const escapeHtml = (s: string) =>
                     ))}
                   </div>
 
-                  <button onClick={finalizarEGerarRelatorio} className="w-full bg-indigo-900 hover:bg-black text-white font-black py-5 rounded-xl shadow-2xl transition-all uppercase tracking-widest text-xl mb-4">
+                  <button onClick={confirmarFinalizarEGerarRelatorio} className="w-full bg-indigo-900 hover:bg-black text-white font-black py-5 rounded-xl shadow-2xl transition-all uppercase tracking-widest text-xl mb-4">
                     Finalizar e Gerar Relatório
                   </button>
 
@@ -3383,8 +3400,7 @@ const escapeHtml = (s: string) =>
                   )}
                 </div>
               )}
-
-              
+           
             </div>
           </div>
 
