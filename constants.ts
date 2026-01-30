@@ -1,5 +1,5 @@
 
-export const TECHNICIANS = ["", "Robert", "Wallace", "Paulo Henrique", "Paulo Sergio", "Valdemir"];
+export const TECHNICIANS = ["", "Wallace", "Paulo Henrique", "Paulo Sergio", "Valdemir"];
 export const ASSISTANTS = ["", "Kazury", "Túlio", "Júlio"];
 
 export const ONU_MODELS = [

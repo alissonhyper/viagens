@@ -35,6 +35,8 @@ export const trayService = {
         observation: data.observation ?? "",
         attendant: (data.attendant ?? "").trim().toUpperCase(),
         trayOrder: typeof data.trayOrder === "number" ? data.trayOrder : 9999,
+        tripId: data.tripId ?? null,
+        tripAt: data.tripAt ?? null,
       };
     });
 
@@ -46,10 +48,12 @@ export const trayService = {
 
 add: async (item: Omit<TrayItem, "id">) => {
   const ref = await db.collection(COLLECTION).add({
-    ...item,
-    trayOrder: typeof (item as any).trayOrder === "number" ? (item as any).trayOrder : Date.now(),
-    createdAt: (firebase as any).firestore.FieldValue.serverTimestamp(),
-    updatedAt: (firebase as any).firestore.FieldValue.serverTimestamp(),
+  ...item,
+  tripId: null,
+  tripAt: null,
+  trayOrder: typeof (item as any).trayOrder === "number" ? (item as any).trayOrder : Date.now(),
+  createdAt: (firebase as any).firestore.FieldValue.serverTimestamp(),
+  updatedAt: (firebase as any).firestore.FieldValue.serverTimestamp(),
   });
   return ref;
 },
@@ -63,6 +67,21 @@ add: async (item: Omit<TrayItem, "id">) => {
 
   remove: async (id: string) => {
     await db.collection(COLLECTION).doc(id).delete();
+  },
+
+    // Marca um grupo de itens da bandeja como "em viagem"
+  markItemsInTrip: async (ids: string[], tripId: string) => {
+    const batch = db.batch();
+
+    ids.forEach((id) => {
+      batch.update(db.collection(COLLECTION).doc(id), {
+        tripId,
+        tripAt: (firebase as any).firestore.FieldValue.serverTimestamp(),
+        updatedAt: (firebase as any).firestore.FieldValue.serverTimestamp(),
+      });
+    });
+
+    await batch.commit();
   },
 
   updateOrder: async (items: { id: string; trayOrder: number }[]) => {

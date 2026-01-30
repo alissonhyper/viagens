@@ -34,12 +34,12 @@ import { db } from "./firebaseConfig";
 const ATTENDANTS = [
   '',
   'ALISSON',
-  'WELVISTER',
+  'WÉLVISTER',
   'URIEL',
   'PEDRO',
   'JOÃO',
   'WILLIANS',
-  'KEVEN',
+  'KÉVEN',
   'AMILE',
   'RAYSSA',
   'YASMIN',
@@ -1261,6 +1261,16 @@ useEffect(() => {
 
   const unsub = trayService.subscribe(
     (items) => {
+      const withTrip = items.filter(i => !!i.tripId);
+
+
+console.log("✅ DEBUG tripId (count):", withTrip.length);
+console.log("✅ DEBUG tripId (first):", withTrip.slice(0, 5).map(i => ({
+id: i.id,
+city: i.city,
+client: i.clientName,
+tripId: i.tripId,
+})));
       setTrayItems(items);
       console.log("SNAPSHOT -> bandeja:", items.length);
     },
@@ -2191,6 +2201,33 @@ const getCityCount = (cityName: string) => {
 };
 
 
+
+// ==============================
+// "EM VIAGEM" (ordens que já foram incluídas em alguma viagem)
+// Regra: se tiver tripId -> foi vinculada na viagem
+// ==============================
+const getRegionTripCount = (regionName: string) => {
+  const cities = REGIONS[regionName] || [];
+  const citySet = new Set(cities.map(c => norm(c)));
+
+  return trayItems.filter(t =>
+    citySet.has(norm(t.city)) &&
+    norm(t.status) !== "REALIZADA" &&
+    !!t.tripId
+  ).length;
+};
+
+const getCityTripCount = (cityName: string) => {
+  return trayItems.filter(t =>
+    norm(t.city) === norm(cityName) &&
+    norm(t.status) !== "REALIZADA" &&
+    !!t.tripId
+  ).length;
+};
+
+
+
+
   const updateCity = (index: number, updates: Partial<AppState['cities'][0]>) => {
     setState(prev => {
       const newCities = [...prev.cities];
@@ -2299,6 +2336,81 @@ const getCityCount = (cityName: string) => {
     updateState('services', newServices);
   };
 
+
+
+// ==============================
+// VINCULAR BANDEJA -> VIAGEM (ao salvar)
+// Regra principal:
+// - compara por (cidade + cliente)
+// - NÃO trava por data (porque ordem pode ser de outro dia e entrar na viagem)
+// Segurança:
+// - se item já tiver tripId de outra viagem, ignora
+// ==============================
+const normalizeText = (s: string) =>
+  (s || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "") // remove acentos
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+
+const getTrayIdsForCurrentTrip = (tripId: string) => {
+  // Mapa: cityKey -> Set(clientKey)
+  // Assim a gente só marca as ordens que estão na programação (por cliente)
+  const wantedByCity = new Map<string, Set<string>>();
+
+  // 1) Monta a lista "do que eu quero marcar" baseado no state.cities
+  for (const c of state.cities) {
+    if (!c?.enabled || !c?.name?.trim()) continue;
+
+    const cityKey = normalizeText(c.name);
+    if (!wantedByCity.has(cityKey)) wantedByCity.set(cityKey, new Set<string>());
+
+    const clientSet = wantedByCity.get(cityKey)!;
+
+    // adiciona os clientes (se tiver nome)
+    for (const cl of c.clients) {
+      const nm = (cl?.name || "").trim();
+      if (!nm) continue;
+      clientSet.add(normalizeText(nm));
+    }
+  }
+
+  const ids: string[] = [];
+  const skippedOtherTrip: TrayItem[] = [];
+
+  // 2) Varre a bandeja e marca o que bate
+  for (const it of trayItems) {
+    if (!it?.id) continue;
+
+    const cityKey = normalizeText(it.city);
+    const wantedClients = wantedByCity.get(cityKey);
+    if (!wantedClients) continue; // cidade não está na programação
+
+    // Segurança: já está em outra viagem? ignora
+    if (it.tripId && it.tripId !== tripId) {
+      skippedOtherTrip.push(it);
+      continue;
+    }
+
+    // Se a cidade tem lista de clientes na programação, exige bater por cliente
+    if (wantedClients.size > 0) {
+      const clientKey = normalizeText(it.clientName);
+      if (!wantedClients.has(clientKey)) continue;
+    }
+    // Se wantedClients.size == 0, significa cidade habilitada mas sem clientes.
+    // Aí ele marca por cidade (fallback). Se você NÃO quiser esse fallback, me avise.
+
+    ids.push(it.id);
+  }
+
+  return { ids, skippedOtherTrip };
+};
+
+
+
+
+
 // --- LÓGICA DE VIAGEM (SALVAR, CARREGAR, EDITAR) - AGORA COM FIRESTORE ---
 
     // 1. A função salvarViagem fará a comunicação com o Firestore
@@ -2352,33 +2464,52 @@ const salvarViagem = async (customFeedback?: EncerramentoFeedback[]) => {
 };
 
 const handleManualSave = async () => {
-    try {
-        await salvarViagem();
-        alert(editingTripId ? "Alterações salvas com sucesso!" : "Nova viagem salva no Histórico Colaborativo!");
-    } catch (error) {
-        // O erro já foi logado e alertado dentro de salvarViagem
-    }
-};
+  try {
+    // 1) Salva/atualiza a viagem no Firestore e pega o ID (tripId)
+    //    - Se estava editando, retorna o editingTripId
+    //    - Se era nova, cria e retorna o novo ID
+    const tripId = await salvarViagem();
 
-const excluirViagem = async (id: string) => {
-    if (!currentUser) {
-        alert("Você precisa estar logado para excluir viagens.");
-        return;
+    // 2) Descobre quais itens da BANDEJA pertencem a essa viagem
+    //    (comparando cidade + nome do cliente, normalizados)
+    const { ids, skippedOtherTrip } = getTrayIdsForCurrentTrip(tripId);
+
+    // 3) Marca no Firestore os itens encontrados (tripId + tripAt)
+    //    Isso é o que vai permitir pintar de verde depois
+    if (ids.length > 0) {
+      await trayService.markItemsInTrip(ids, tripId);
     }
-    if (confirm("Deseja realmente excluir esta viagem do histórico (permanente e colaborativo)?")) {
-        try {
-            await firestoreService.deleteViagem(id);
-            alert("Viagem excluída com sucesso do histórico.");
-            
-            // O onSnapshot no Dashboard já irá remover do histórico. Apenas o estado local precisa de ajuste:
-            if (editingTripId === id) {
-                resetForm();
-            }
-        } catch (error) {
-            console.error("Erro ao excluir viagem:", error);
-            alert("Falha ao excluir a viagem. Verifique se você tem permissão.");
-        }
+
+    // ✅ Atualiza UI na hora (sem depender do tempo do Firestore)
+    setTrayItems(prev =>
+    prev.map(t => (ids.includes(t.id) ? { ...t, tripId } : t))
+    );
+
+    // 4) Se algum item já estava marcado em outra viagem, não mexemos nele
+    //    (só loga pra você ver no console)
+    if (skippedOtherTrip.length > 0) {
+      console.warn(
+        "Itens ignorados (já pertencem a outra viagem):",
+        skippedOtherTrip.map((x) => ({
+          id: x.id,
+          city: x.city,
+          client: x.clientName,
+          tripId: x.tripId,
+        }))
+      );
     }
+
+    // 5) Mensagem final (mantém seu comportamento anterior + mostra quantas ordens vinculou)
+    alert(
+      editingTripId
+        ? `Alterações salvas com sucesso! (${ids.length} ordem(ns) vinculada(s) na bandeja)`
+        : `Nova viagem salva no Histórico Colaborativo! (${ids.length} ordem(ns) vinculada(s) na bandeja)`
+    );
+  } catch (error) {
+    // O salvarViagem já loga e pode dar throw; aqui só garantimos um alerta geral
+    console.error("Erro no handleManualSave:", error);
+    alert("Falha ao salvar e vincular ordens da bandeja. Veja o console.");
+  }
 };
 
 // --- FUNÇÕES DE CARREGAMENTO (MANTIDAS) ---
@@ -2401,9 +2532,32 @@ const carregarViagemSafe = (viagem: Viagem) => {
   carregarViagem(viagem);
 };
 
+
 const excluirViagemSafe = async (id: string) => {
+  // Permissão (se você já tem essa regra)
   if (!canEditHistory) return;
-  await excluirViagem(id);
+
+  if (!currentUser) {
+    alert("Você precisa estar logado para excluir viagens.");
+    return;
+  }
+
+  if (!confirm("Deseja realmente excluir esta viagem do histórico (permanente e colaborativo)?")) {
+    return;
+  }
+
+  try {
+    await firestoreService.deleteViagem(id);
+    alert("Viagem excluída com sucesso do histórico.");
+
+    // Se você estava editando essa viagem, reseta o formulário
+    if (editingTripId === id) {
+      resetForm();
+    }
+  } catch (error) {
+    console.error("Erro ao excluir viagem:", error);
+    alert("Falha ao excluir a viagem. Verifique se você tem permissão.");
+  }
 };
 
 
@@ -3470,128 +3624,189 @@ const escapeHtml = (s: string) =>
 
                 
                 
-                {/* NÍVEL 1: REGIÕES COM DESTAQUE CONDICIONAL */}
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    {Object.keys(REGIONS).map(region => {
-                        const regionCount = getRegionCount(region);
-                        const hasItems = regionCount > 0;
-                        return (
-                        <button
-                            key={region}
-                            onClick={() => { setActiveTrayRegion(region); setActiveTrayCity(null); }}
-                            className={`relative overflow-hidden py-6 px-4 rounded-xl text-xs md:text-sm font-black uppercase transition-all flex flex-col items-center justify-center gap-1 hover:brightness-110 border-2
-  ${activeTrayRegion === region
-    ? `bg-amber-500 text-white border-amber-200
-     shadow-[0_18px_22px_-18px_rgba(245,158,11,0.75)]
-     ring-1 ring-white/30
-     -translate-y-[1px]`
-    : isDarkMode
-      ? 'bg-[#2D3748] text-gray-100 border-transparent hover:bg-[#4A5568] shadow-md'
-      : 'bg-gray-100 text-gray-600 border-transparent hover:bg-gray-200 shadow-md'
-  }
+{/* NÍVEL 1: REGIÕES COM DESTAQUE CONDICIONAL */}
+<div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+  {Object.keys(REGIONS).map((region) => {
+    const regionCount = getRegionCount(region);
+    const hasItems = regionCount > 0;
 
-  ${
-    // ✅ SOMBRA FIXA “embaixo” quando tem itens e NÃO está selecionado
-    hasItems && activeTrayRegion !== region
-      ? (isDarkMode
-          ? 'shadow-[0_17px_20px_-19px_rgba(245,158,11,0.60)]'
-          : 'shadow-[0_25px_20px_-20px_rgba(245,158,11,0.55)]')
-      : ''
-  }
+    // ✅ NOVO: quantas ordens dessa região já estão "em viagem" (tripId preenchido)
+    const regionTripCount = getRegionTripCount(region);
+    const hasTrip = regionTripCount > 0;
 
-  ${
-    // ✅ GLOW/NEON no fundo (só no hover) quando tem itens e NÃO está selecionado
-    hasItems && activeTrayRegion !== region
-      ? `
-        before:content-['']
-        before:absolute
-        before:inset-0
-        before:-z-10
-        before:rounded-xl
-        before:translate-y-2
-        before:blur-2xl
-        before:opacity-0
-        before:transition-opacity
-        before:duration-200
-        hover:before:opacity-90
-        before:bg-amber-400/55
-      `
-      : ''
-  }
+    return (
+      <button
+        key={region}
+        onClick={() => {
+          setActiveTrayRegion(region);
+          setActiveTrayCity(null);
+        }}
+        className={`relative overflow-hidden py-6 px-4 rounded-xl text-xs md:text-sm font-black uppercase transition-all flex flex-col items-center justify-center gap-1 hover:brightness-110 border-2
+          ${activeTrayRegion === region
+            ? `bg-amber-500 text-white border-amber-200
+              shadow-[0_18px_22px_-18px_rgba(245,158,11,0.75)]
+              ring-1 ring-white/30
+              -translate-y-[1px]`
+            : isDarkMode
+              ? 'bg-[#2D3748] text-gray-100 border-transparent hover:bg-[#4A5568] shadow-md'
+              : 'bg-gray-100 text-gray-600 border-transparent hover:bg-gray-200 shadow-md'
+          }
 
-  ${hasItems && activeTrayRegion !== region ? 'border-amber-500' : ''}
-`}
-                              >
-                            {region}
-                            <span
-  className={`text-[10px] px-2 py-0.5 rounded-full shadow-[0_8px_10px_-10px_rgba(0,0,0,0.35)]
-    ${activeTrayRegion === region ? 'bg-black/30 text-white' : 'bg-gray-400 text-white'}`}
->
-                                {regionCount} Ordens
-                            </span>
-                        </button>
-                    )})}
-              </div>
+          ${
+            // ✅ SOMBRA FIXA “embaixo” quando tem itens e NÃO está selecionado
+            hasItems && activeTrayRegion !== region
+              ? (isDarkMode
+                  ? 'shadow-[0_17px_20px_-19px_rgba(245,158,11,0.60)]'
+                  : 'shadow-[0_25px_20px_-20px_rgba(245,158,11,0.55)]')
+              : ''
+          }
 
-                {/* NÍVEL 2: CIDADES COM AJUSTE DE COR DARK MODE */}
-                {activeTrayRegion && (
-                    <div className="flex flex-wrap gap-2 pt-2 animate-in slide-in-from-top-2">
-                        {REGIONS[activeTrayRegion].map(city => {
-                            const count = getCityCount(city);
+          ${
+            // ✅ GLOW/NEON no fundo (só no hover) quando tem itens e NÃO está selecionado
+            hasItems && activeTrayRegion !== region
+              ? `
+                before:content-['']
+                before:absolute
+                before:inset-0
+                before:-z-10
+                before:rounded-xl
+                before:translate-y-2
+                before:blur-2xl
+                before:opacity-0
+                before:transition-opacity
+                before:duration-200
+                hover:before:opacity-90
+                before:bg-amber-400/55
+              `
+              : ''
+          }
 
-                            
-                            return (
-                                <button
-                                    key={city}
-                                    onClick={() => setActiveTrayCity(city)}
-className={`py-2 px-4 rounded-lg text-xs font-bold uppercase transition-all border flex items-center gap-2
-  ${activeTrayCity === city
-    ? (isDarkMode
-      ? `bg-[#ff9f43]/40 text-white border-amber-300/70
-         shadow-[0_14px_18px_-14px_rgba(245,158,11,0.65)]
-         ring-1 ring-white/20 -translate-y-[1px]`
-      : `bg-amber-100 text-amber-900 border-amber-300
-         shadow-[0_12px_16px_-14px_rgba(245,158,11,0.30)]
-         ring-1 ring-amber-200 -translate-y-[1px]`)
-    : (isDarkMode
-        ? 'bg-[#1A202C] text-gray-400 border-gray-600 hover:border-amber-500'
-        : 'bg-white text-gray-500 border-gray-200 hover:border-amber-300')
-  }
+          ${hasItems && activeTrayRegion !== region ? 'border-amber-500' : ''}
+        `}
+      >
+        {/* ✅ NOVO: pontinho verde no canto quando tiver ordens em viagem */}
+        {hasTrip && (
+          <span
+            className="absolute left-2 top-2 h-2 w-2 rounded-full bg-emerald-400 shadow-sm"
+            title="Existe ordem já incluída em viagem"
+          />
+        )}
 
-  ${
-    // ✅ destaque clean quando tem itens e NÃO está selecionado
-    count > 0 && activeTrayCity !== city
-      ? (isDarkMode
-          ? 'border-amber-400/50 shadow-[0_8px_10px_-10px_rgba(245,158,11,0.55)]'
-          : 'border-amber-300 shadow-[0_8px_10px_-10px_rgba(245,158,11,0.25)]')
-      : ''
-  }
+        {region}
 
-  ${
-    // ✅ micro lift no hover (bem discreto)
-    count > 0 && activeTrayCity !== city
-      ? 'hover:-translate-y-[1px] hover:shadow-[0_10px_12px_-12px_rgba(245,158,11,0.45)]'
-      : ''
-  }
-`}
-                                >
-                                  {/* Indicador de Itens Pendentes, Notificação */}
-                                    {count > 0 && activeTrayCity !== city && (
-                                    <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-amber-500 shadow-sm" />
-                                    )}
-                                    {city}
-                                    <span
-                                        className={`text-[9px] px-1.5 py-0.5 rounded-full shadow-[0_8px_10px_-10px_rgba(0,0,0,0.35)]
-                                        ${activeTrayCity === city ? 'bg-black/30 text-white' : 'bg-gray-300 text-gray-600'}`}
-                                    >
-                                     {count}
-                                    </span>
-                                </button>
-                            );
-                        })}
-                    </div>
-                )}
-               </div>
+        <span
+          className={`text-[10px] px-2 py-0.5 rounded-full shadow-[0_8px_10px_-10px_rgba(0,0,0,0.35)]
+            ${activeTrayRegion === region ? 'bg-black/30 text-white' : 'bg-gray-400 text-white'}`}
+        >
+          {regionCount} Ordens
+        </span>
+      </button>
+    );
+  })}
+</div>
+
+
+ {/* NÍVEL 2: CIDADES COM AJUSTE DE COR DARK MODE */}
+{activeTrayRegion && (
+  <div className="flex flex-wrap gap-2 pt-2 animate-in slide-in-from-top-2">
+{REGIONS[activeTrayRegion].map((city) => {
+  const count = getCityCount(city);
+
+  // ✅ calcula 1x só
+  const cityTripCount = getCityTripCount(city);
+  const hasTrip = cityTripCount > 0;
+
+  const isActive = activeTrayCity === city;
+  const hasItems = count > 0 && !isActive;
+
+  return (
+    <button
+      key={city}
+      onClick={() => setActiveTrayCity(city)}
+      className={`relative py-2 px-4 rounded-lg text-xs font-bold uppercase transition-all border flex items-center gap-2
+
+${
+  // ✅ cidade selecionada:
+  //    - se está em viagem => estilo VERDE
+  //    - se não => mantém seu estilo ÂMBAR atual
+  isActive
+    ? (hasTrip
+        ? (isDarkMode
+            ? `bg-emerald-500/20 text-emerald-100 border-emerald-300/60
+               shadow-[0_14px_18px_-14px_rgba(16,185,129,0.55)]
+               ring-1 ring-emerald-300/30 -translate-y-[1px]`
+            : `bg-emerald-100 text-emerald-900 border-emerald-300
+               shadow-[0_12px_16px_-14px_rgba(16,185,129,0.35)]
+               ring-1 ring-emerald-200 -translate-y-[1px]`)
+        : (isDarkMode
+            ? `bg-[#ff9f43]/40 text-white border-amber-300/70
+               shadow-[0_14px_18px_-14px_rgba(245,158,11,0.65)]
+               ring-1 ring-white/20 -translate-y-[1px]`
+            : `bg-amber-100 text-amber-900 border-amber-300
+               shadow-[0_12px_16px_-14px_rgba(245,158,11,0.30)]
+               ring-1 ring-amber-200 -translate-y-[1px]`))
+    : (
+        // ✅ cidade NÃO selecionada: muda o hover conforme "em viagem" ou não
+        isDarkMode
+          ? `bg-[#1A202C] text-gray-400 border-gray-600 ${hasTrip ? "hover:border-emerald-400" : "hover:border-amber-500"}`
+          : `bg-white text-gray-500 border-gray-200 ${hasTrip ? "hover:border-emerald-500" : "hover:border-amber-300"}`
+      )
+}
+
+
+        ${
+          // ✅ destaque quando tem itens (e não está selecionada)
+          hasItems
+            ? (hasTrip
+                ? (isDarkMode
+                    ? "border-emerald-400/40 shadow-[0_8px_10px_-10px_rgba(52,211,153,0.35)]"
+                    : "border-emerald-400/50 shadow-[0_8px_10px_-10px_rgba(16,185,129,0.25)]")
+                : (isDarkMode
+                    ? "border-amber-400/50 shadow-[0_8px_10px_-10px_rgba(245,158,11,0.55)]"
+                    : "border-amber-300 shadow-[0_8px_10px_-10px_rgba(245,158,11,0.25)]"))
+            : ""
+        }
+
+        ${
+          // ✅ micro lift no hover + sombra coerente (verde se em viagem, âmbar se normal)
+          hasItems
+            ? `${hasTrip
+                ? "hover:shadow-[0_10px_12px_-12px_rgba(16,185,129,0.40)]"
+                : "hover:shadow-[0_10px_12px_-12px_rgba(245,158,11,0.45)]"
+              } hover:-translate-y-[1px]`
+            : ""
+        }
+
+        ${
+          // ✅ “sinal verde” discreto (só quando NÃO está selecionada)
+          hasTrip && !isActive ? "ring-1 ring-emerald-400/35 border-emerald-400/40" : ""
+        }
+      `}
+    >
+      {/* ✅ bolinha: verde se em viagem, âmbar se normal */}
+      {count > 0 && !isActive && (
+        <span
+          className={`absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full shadow-sm ${
+            hasTrip ? "bg-emerald-400" : "bg-amber-500"
+          }`}
+        />
+      )}
+
+      {city}
+
+      <span
+        className={`text-[9px] px-1.5 py-0.5 rounded-full shadow-[0_8px_10px_-10px_rgba(0,0,0,0.35)]
+          ${isActive ? "bg-black/30 text-white" : "bg-gray-300 text-gray-600"}`}
+      >
+        {count}
+      </span>
+    </button>
+  );
+})}
+
+  </div>
+)}
+</div>
 
             {/* NÍVEL 3: GRID DE DADOS COM REORDENAÇÃO DRAG & DROP */}
             {activeTrayCity && (
@@ -3627,8 +3842,13 @@ className={`py-2 px-4 rounded-lg text-xs font-bold uppercase transition-all bord
 
             {/* LISTA DA ORDENS DA BANDEJA */}
                             <tbody>
-                                {computedTrayItems.map((item, index, arr) => (
-                               <tr
+{computedTrayItems.map((item, index, arr) => {
+// ✅ NOVO: se tiver tripId, essa ordem já está "em viagem"
+const inTrip = !!item.tripId;
+
+
+return (
+  <tr
   key={item.id}
   draggable
   onDragStart={(e) => handleDragStart(e, item.id)}
@@ -3660,12 +3880,18 @@ className={`py-2 px-4 rounded-lg text-xs font-bold uppercase transition-all bord
                                         
 <td className="relative p-2 pl-4 align-middle whitespace-nowrap">
   {/* Barra lateral da linha (hover/drag) */}
-  <span
-    className={`
-      absolute left-0 top-0 bottom-0 w-[3px] rounded-r transition-colors
-      ${dragOverId === item.id ? 'bg-amber-400/90' : 'bg-transparent group-hover:bg-amber-400/70'}
-    `}
-  />
+<span
+  className={`
+    absolute left-0 top-0 bottom-0 w-[3px] rounded-r transition-colors
+    ${
+      dragOverId === item.id
+        ? 'bg-amber-400/90'                 // drag/drop continua âmbar
+        : inTrip
+          ? 'bg-emerald-400/90'             // ✅ em viagem: verde fixo
+          : 'bg-transparent group-hover:bg-amber-400/70' // normal: âmbar no hover
+    }
+  `}
+/>
 
   {/* Wrapper do date: mantém o ícone alinhado sem “quebrar” a coluna */}
   <div className="relative w-[148px] sm:w-[140px]">
@@ -3792,8 +4018,9 @@ className={`py-2 px-4 rounded-lg text-xs font-bold uppercase transition-all bord
                                             </button>
                                            </div>
                                         </td>
-                                    </tr>
-                                ))}
+                                        </tr>
+                                        );
+                                        })}
                             </tbody>
                         </table>
                                           <button

@@ -66,4 +66,8 @@ export interface TrayItem {
   observation: string;
   attendant: string;
   trayOrder?: number;
+
+// marca que essa ordem foi incluída numa viagem do histórico
+  tripId?: string | null;
+  tripAt?: any; // Timestamp (não precisa tipar forte agora)
 }
