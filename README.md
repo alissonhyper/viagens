@@ -1,20 +1,59 @@
 <div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+
+Feito por Alisson Silva
+
+# PROGRAMAÇÃO DE VIAGEM
+**Sistema interno para abertura, organização e fechamento de programações de viagem**
+
+[🔗 Acessar sistema (Vercel)](https://viagens-jade.vercel.app)
+
 </div>
 
-# Run and deploy your AI Studio app
+---
 
-This contains everything you need to run your app locally.
+## ✅ Sobre o projeto
 
-View your app in AI Studio: https://ai.studio/apps/drive/1xb5vth7-FYiSoAV2UokZl2x4Co1yyafe
+O **Programação de Viagem** é um sistema web para organizar a rotina de viagens técnicas:  
+- **Bandeja de ordens** (categorizada por região e cidade)  
+- **Nova programação** (geração + salvar no histórico)  
+- **Histórico colaborativo** (viagens abertas/finalizadas, relatório, edição)  
+- **Integração com Firebase/Firestore**  
+- **Sinalização de ordens “em viagem”** na bandeja (vinculadas à viagem salva)
 
-## Run Locally
+---
 
-**Prerequisites:**  Node.js
+## 🚀 Tecnologias
 
+- **React + TypeScript**
+- **Vite**
+- **TailwindCSS**
+- **Firebase (Firestore + Auth)**
+- **Vercel (Deploy)**
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+---
+
+## 🧩 Funcionalidades principais
+
+### Bandeja
+- Organização por **Região → Cidade**
+- Contagem de ordens pendentes por grupo
+- Reordenação (drag & drop)
+- Importação por mensagem padrão
+- **Destaque “em viagem”** para ordens vinculadas a uma programação
+
+### Programação / Histórico
+- Gerar programação a partir de cidades/atendimentos
+- Salvar/editar viagens no histórico
+- Encerramento técnico e relatório
+
+---
+
+## 🛠 Rodar localmente
+
+### Pré-requisitos
+- Node.js 18+ recomendado
+
+### Instalar e iniciar
+```bash
+npm install
+npm run dev
