@@ -1261,18 +1261,58 @@ useEffect(() => {
 
   const unsub = trayService.subscribe(
     (items) => {
-      const withTrip = items.filter(i => !!i.tripId);
+      // ✅ prova de vida: esse log tem que aparecer sempre que o snapshot atualizar
+      console.log("🔥 CALLBACK BANDEJA rodou | total:", items.length);
 
+      // helper: normaliza texto (tira acentos, espaços extras, caixa)
+      const norm = (s: string) =>
+        (s || "")
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .trim()
+          .toLowerCase()
+          .replace(/\s+/g, " ");
 
-console.log("✅ DEBUG tripId (count):", withTrip.length);
-console.log("✅ DEBUG tripId (first):", withTrip.slice(0, 5).map(i => ({
-id: i.id,
-city: i.city,
-client: i.clientName,
-tripId: i.tripId,
-})));
+      // pega só itens que estão marcados "em viagem"
+      const withTrip = items.filter((i) => !!i.tripId);
+
+      console.log("✅ DEBUG tripId (count):", withTrip.length);
+
+      // ✅ resumo por cidade (só das que têm tripId)
+      const byCity = withTrip.reduce<Record<string, number>>((acc, it) => {
+        const c = norm(it.city);
+        acc[c] = (acc[c] || 0) + 1;
+        return acc;
+      }, {});
+      console.log("🟢 DEBUG tripId por cidade:", byCity);
+
+      // =========================
+      // ✅ PASSO 2: foco numa cidade específica
+      // (troque aqui para testar outra)
+      // =========================
+      const targetCity = "JEQUITINHONHA";
+
+      const cityWithTrip = withTrip.filter(
+        (i) => norm(i.city) === norm(targetCity)
+      );
+
+      console.log(`🟢 DEBUG ${targetCity} com tripId:`, cityWithTrip.length);
+
+      if (cityWithTrip.length > 0) {
+        console.table(
+          cityWithTrip.map((i) => ({
+            id: i.id,
+            city: i.city,
+            client: i.clientName,
+            status: i.status,
+            tripId: i.tripId,
+            tripAt: i.tripAt,
+          }))
+        );
+      }
+      // =========================
+
       setTrayItems(items);
-      console.log("SNAPSHOT -> bandeja:", items.length);
     },
     (err) => console.error("Erro trayService.subscribe:", err)
   );
@@ -1719,7 +1759,13 @@ const findRegionByCity = (city: string) => {
   
 
   // Itens visíveis da bandeja (filtrados e ordenados)
-  const norm = (s?: string | null) => (s ?? "").trim().toUpperCase();
+  // ✅ util: normaliza texto (remove espaços, acentos e padroniza)
+  const norm = (s?: string | null) =>
+  (s ?? "")
+    .trim()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "") // remove acentos
+    .toUpperCase();
 
   const computedTrayItems: TrayItem[] = trayItems
   .filter(t =>
@@ -1972,38 +2018,53 @@ useEffect(() => {
     });
   };
 
-  // --- TRAY FUNCTIONS ---
-  const addTrayItem = () => {
-    if (!activeTrayRegion || !activeTrayCity) {
-      alert("Selecione uma região e uma cidade primeiro.");
-      return;
-    }
-    const newItem: TrayItem = {
-      id: Math.random().toString(36).substr(2, 9),
-      region: activeTrayRegion,
-      city: activeTrayCity,
-      date: new Date().toISOString().split('T')[0],
-      clientName: "",
-      status: "",
-      equipment: "",
-      observation: "",
-      attendant: ""
-    };
-    setTrayItems([...trayItems, newItem]);
+
+
+// --- TRAY FUNCTIONS ---
+
+/**
+ * ✅ (LEGADO) Adiciona item só no estado local.
+ * Se você já usa Firestore (addTrayRow), pode remover esta função e o botão que chama ela.
+ */
+const addTrayItem = () => {
+  if (!activeTrayRegion || !activeTrayCity) {
+    alert("Selecione uma região e uma cidade primeiro.");
+    return;
+  }
+
+  const newItem: TrayItem = {
+    id: Math.random().toString(36).substr(2, 9),
+    region: activeTrayRegion,
+    city: activeTrayCity,
+    date: new Date().toISOString().split("T")[0],
+    clientName: "",
+    status: "",
+    equipment: "",
+    observation: "",
+    attendant: "",
+  };
+
+  setTrayItems((prev) => [...prev, newItem]);
 };
 
-  const updateTrayItem = (id: string, field: keyof TrayItem, value: string) => {
-    setTrayItems(prev => prev.map(item => item.id === id ? { ...item, [field]: value } : item));
+/**
+ * ✅ (LEGADO) Atualiza item só no estado local.
+ */
+const updateTrayItem = (id: string, field: keyof TrayItem, value: string) => {
+  setTrayItems((prev) =>
+    prev.map((item) => (item.id === id ? { ...item, [field]: value } : item))
+  );
 };
 
-  const deleteTrayItem = async (id: string) => {
+/** Remove item da bandeja (UI + Firestore) */
+const deleteTrayItem = async (id: string) => {
   if (!window.confirm("Remover este item da bandeja?")) return;
 
   try {
-    // remove da UI imediatamente
-    setTrayItems(prev => prev.filter(t => t.id !== id));
+    // UI imediata
+    setTrayItems((prev) => prev.filter((t) => t.id !== id));
 
-    // remove do Firestore
+    // Persistência
     await trayService.remove(id);
   } catch (err) {
     console.error("deleteTrayItem ERRO:", err);
@@ -2011,13 +2072,16 @@ useEffect(() => {
   }
 };
 
-  const updateTrayField = async <K extends keyof TrayItem>(
+/** Atualiza campo na bandeja (UI + Firestore) */
+const updateTrayField = async <K extends keyof TrayItem>(
   id: string,
   field: K,
   value: TrayItem[K]
 ) => {
   // UI imediata
-  setTrayItems(prev => prev.map(t => (t.id === id ? { ...t, [field]: value } : t)));
+  setTrayItems((prev) =>
+    prev.map((t) => (t.id === id ? { ...t, [field]: value } : t))
+  );
 
   // Persistência
   try {
@@ -2027,9 +2091,8 @@ useEffect(() => {
   }
 };
 
-
-  // Função para adicionar uma nova linha na bandeja com estado mínimo
-  const addTrayRow = async () => {
+/** Adiciona uma nova linha na bandeja (Firestore) */
+const addTrayRow = async () => {
   try {
     if (!activeTrayRegion || !activeTrayCity) return;
 
@@ -2047,12 +2110,15 @@ useEffect(() => {
       trayOrder: nextOrder,
     };
 
-    const docRef = await trayService.add(payload);
-    console.log("addTrayRow OK, doc id:", docRef?.id);
+    const createdId = await trayService.add(payload);
+    console.log("addTrayRow OK, id:", createdId);
   } catch (err) {
     console.error("addTrayRow ERRO:", err);
-  }  
+  }
 };
+
+
+
 
   // --- DRAG AND DROP FUNCTIONS ---
   // Função de drag start corrigida
@@ -2534,7 +2600,6 @@ const carregarViagemSafe = (viagem: Viagem) => {
 
 
 const excluirViagemSafe = async (id: string) => {
-  // Permissão (se você já tem essa regra)
   if (!canEditHistory) return;
 
   if (!currentUser) {
@@ -2547,10 +2612,15 @@ const excluirViagemSafe = async (id: string) => {
   }
 
   try {
+    // ✅ 1) primeiro desvincula a bandeja (para garantir que o verde some)
+    const cleared = await trayService.clearTripByTripId(id);
+    console.log("✅ Bandeja desvinculada (delete):", cleared);
+
+    // ✅ 2) depois exclui a viagem do histórico
     await firestoreService.deleteViagem(id);
+
     alert("Viagem excluída com sucesso do histórico.");
 
-    // Se você estava editando essa viagem, reseta o formulário
     if (editingTripId === id) {
       resetForm();
     }
@@ -2570,8 +2640,6 @@ const carregarParaEncerramento = (viagem: Viagem) => {
     setEditingTripId(null); 
     
     // 3. MUDA PARA A ABA DE ENCERRAMENTO/RELATÓRIO
-    // Baseado na sua imagem, a aba de encerramento parece ter o nome 'Relatorio' ou 'Encerramento'.
-    // Vamos usar 'encerramento' como um nome lógico, mas confirme se o seu componente tem essa aba.
     setActiveTab('form');
 };
 
@@ -2579,73 +2647,52 @@ const carregarParaEncerramento = (viagem: Viagem) => {
 // --- CONCLUSÃO AUTOMÁTICA DE VIAGEM (AGORA ATUALIZA O FIRESTORE) ---
 
 const concluirViagemHistorico = async (viagem: Viagem) => {
-    if (!currentUser) {
-        alert("Você precisa estar logado para concluir viagens.");
-        return;
-    }
-    
-    if (confirm("Deseja concluir esta viagem automaticamente? Isso marcará todos os atendimentos como REALIZADOS no histórico colaborativo.")) {
-        
-        // 1. Cria o feedback de conclusão (o mesmo código original)
-        const newFeedback: EncerramentoFeedback[] = []; 
-        viagem.state.cities.forEach(city => {
-            if (city.enabled && city.name) {
-                city.clients.forEach((cl, clIdx) => {
-                    if (cl.name && cl.name.trim() !== "") {
-                        newFeedback.push({
-                            clientId: `${city.name}-${clIdx}`,
-                            cityName: city.name, 
-                            status: 'REALIZADO',
-                            attendantName: ""
-                        });
-                    }
-                });
-            }
-        });
+  if (!currentUser) {
+    alert("Você precisa estar logado para concluir viagens.");
+    return;
+  }
 
-        // 2. Prepara o Payload de ATUALIZAÇÃO MÍNIMO
-        const updatePayload: ViagemUpdatePayload = {
-            feedbacks: newFeedback
-        };
+  if (!confirm("Deseja concluir esta viagem automaticamente? Isso marcará todos os atendimentos como REALIZADOS no histórico colaborativo.")) {
+    return;
+  }
 
-        // 3. ATUALIZA O FIRESTORE
-        try {
-            await firestoreService.updateViagem(viagem.id!, updatePayload); 
-            
-            // LIMPEZA AUTOMÁTICA DA BANDEJA
-            // Remove itens da bandeja que correspondem a clientes realizados nesta viagem
-            const clientsToRemove = newFeedback
-                .filter(fb => fb.status === 'REALIZADO')
-                .map(fb => {
-                    // clientId format: "CityName-Index"
-                    const parts = fb.clientId.split('-');
-                    const city = parts[0];
-                    const idx = parseInt(parts[1]);
-                    // Encontrar o nome do cliente no estado original da viagem (ou atualizado)
-                    const clientObj = viagem.state.cities.find(c => c.name === city)?.clients[idx];
-                    return { city, name: clientObj?.name };
-                })
-                .filter(c => c.name); // Ensure name exists
+  const tripId = viagem.id!;
+  const newFeedback: EncerramentoFeedback[] = [];
 
-            if (clientsToRemove.length > 0) {
-                setTrayItems(prev => prev.filter(item => {
-                    // Mantém o item SE ele NÃO estiver na lista de removidos
-                    const isProcessed = clientsToRemove.some(
-                        removed => removed.city.toLowerCase() === item.city.toLowerCase() && 
-                           removed.name?.trim().toLowerCase() === item.clientName.trim().toLowerCase()
-            );
-            return !isProcessed;
-        }));
-    }
-
-            alert("Viagem concluída, histórico atualizado e itens processados removidos da Bandeja!");
-            
-            // Não precisa de setHistory(prev => ...) porque o Dashboard faz isso.
-        } catch (error) {
-            console.error("Erro ao concluir viagem:", error);
-            alert("Falha ao concluir a viagem no servidor.");
+  viagem.state.cities.forEach((city) => {
+    if (city.enabled && city.name) {
+      city.clients.forEach((cl, clIdx) => {
+        if (cl.name && cl.name.trim() !== "") {
+          newFeedback.push({
+            clientId: `${city.name}-${clIdx}`,
+            cityName: city.name,
+            status: "REALIZADO",
+            attendantName: "",
+          });
         }
+      });
     }
+  });
+
+  // 1) Atualiza histórico (feedback)
+  try {
+    await firestoreService.updateViagem(tripId, { feedbacks: newFeedback });
+  } catch (error) {
+    console.error("Erro ao concluir viagem (updateViagem):", error);
+    alert("Falha ao concluir a viagem no servidor.");
+    return;
+  }
+
+  // 2) Desvincula bandeja (remove tripId/tripAt)
+  let cleared = 0;
+  try {
+    cleared = await trayService.clearTripByTripId(tripId);
+    console.log("✅ Itens da bandeja desvinculados:", cleared, "tripId:", tripId);
+  } catch (error) {
+    console.error("⚠️ Viagem concluída, mas falhou ao desvincular bandeja:", error);
+  }
+
+  alert(`Viagem concluída! Bandeja atualizada (${cleared} item(ns) desvinculados).`);
 };
 
 
@@ -2859,41 +2906,47 @@ const confirmarFinalizarEGerarRelatorio = async () => {
       });
       text += `\n`; 
     });
+
     
-    // 2. Salva no Histórico como Finalizada (com feedbacks)
-    // Isso é assíncrono, mas o update de estado abaixo é síncrono.
-    // Para limpar a bandeja corretamente, precisamos saber quais clientes foram finalizados.
-    // Usamos a lista local 'feedback' para calcular o cleanup.
-    
-    await salvarViagem(feedback);
+// 2) Salva no Histórico como Finalizada (com feedbacks)
+// ✅ IMPORTANTE: pegar o tripId retornado pra limpar o vínculo na bandeja
+const tripId = await salvarViagem(feedback);
 
+try {
+  const ops = feedback.map(async (fb) => {
+    if (!fb.trayItemId) return;
 
-   // ✅ Persistir na BANDEJA: remove REALIZADOS e garante status nos que retornam
-  try {
-    const ops = feedback.map(async (fb) => {
-      if (!fb.trayItemId) return;
+    const [cityName, idxStr] = fb.clientId.split("-");
+    const idx = Number(idxStr);
+    const cl = state.cities.find(c => c.name === cityName)?.clients[idx];
+    const statusTexto = (cl?.status ?? "").trim();
 
-      // pega o client do state para recuperar o status textual (SEM INTERNET, etc.)
-      const [cityName, idxStr] = fb.clientId.split("-");
-      const idx = Number(idxStr);
-      const cl = state.cities.find(c => c.name === cityName)?.clients[idx];
-      const statusTexto = (cl?.status ?? "").trim();
+    if (fb.status === "REALIZADO") {
+      await trayService.remove(fb.trayItemId);
+    } else {
+      await trayService.update(fb.trayItemId, {
+        status: statusTexto || "PENDENTE",
+      });
+    }
+  });
 
-      if (fb.status === "REALIZADO") {
-        await trayService.remove(fb.trayItemId);
-      } else {
-        // AUSENTE / NAO_REALIZADO -> permanece na bandeja
-        // garante que o status não volte vazio
-        await trayService.update(fb.trayItemId, {
-          status: statusTexto || "PENDENTE",
-        });
-      }
-    });
+  await Promise.all(ops);
 
-    await Promise.all(ops);
-  } catch (e) {
-    console.error("Erro ao sincronizar bandeja pós-encerramento:", e);
+  // ✅ DEBUG
+  console.log("🧩 FINALIZAR -> tripId usado:", tripId);
+
+  // ✅ PASSO CRÍTICO: limpa o vínculo tripId dos itens que voltaram pra bandeja
+  // (faz o verde sumir sem apagar as ordens)
+  if (tripId) {
+    const cleared = await trayService.clearTripByTripId(tripId);
+    console.log("🧹 FINALIZAR -> tripId removido da bandeja:", { tripId, cleared });
   }
+} catch (e) {
+  console.error("Erro ao sincronizar bandeja pós-encerramento:", e);
+}
+
+
+
 
     
     // 3. Reseta o formulário (Estado Limpo), mas mostra o resultado
@@ -3616,9 +3669,10 @@ const escapeHtml = (s: string) =>
       <i className="fas fa-clipboard-list mr-2"></i> Relatório do dia
     </button>
   )}
+
+
+  
 </div>
-
-
 </div>
 
 
@@ -4030,6 +4084,10 @@ return (
                                           >
                                       <i className="fas fa-plus mr-1"></i> Adicionar Nova Linha
                                     </button>
+                                    
+
+                                    <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2">
+</div>
                     </div>
                 </div>
             )}

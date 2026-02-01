@@ -83,6 +83,44 @@ add: async (item: Omit<TrayItem, "id">) => {
 
     await batch.commit();
   },
+  
+
+
+// ✅ remove o vínculo da bandeja com uma viagem (quando FINALIZA ou EXCLUI)
+clearTripByTripId: async (tripId: string) => {
+  // busca todos os itens da bandeja que estão marcados com essa viagem
+  const snap = await db
+    .collection(COLLECTION)
+    .where("tripId", "==", tripId)
+    .get();
+
+  if (snap.empty) return 0;
+
+  // Firestore batch tem limite (500 ops). Usamos 450 por segurança.
+  const docs = snap.docs;
+  const CHUNK = 450;
+  let cleared = 0;
+
+  for (let i = 0; i < docs.length; i += CHUNK) {
+    const batch = db.batch();
+    const chunk = docs.slice(i, i + CHUNK);
+
+    chunk.forEach((doc) => {
+      batch.update(doc.ref, {
+        tripId: null,
+        tripAt: null,
+        updatedAt: (firebase as any).firestore.FieldValue.serverTimestamp(),
+      });
+    });
+
+    await batch.commit();
+    cleared += chunk.length;
+  }
+
+  return cleared; // útil para log/alert
+},
+
+
 
   updateOrder: async (items: { id: string; trayOrder: number }[]) => {
     const batch = db.batch();
