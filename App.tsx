@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useContext } from 'react';
+import React, { useState, useEffect, useRef, useContext } from 'react';
 import { 
   TECHNICIANS, 
   ASSISTANTS, 
@@ -28,6 +28,7 @@ import { AdminUsersScreen } from './src/screens/AdminUsersScreen';
 
 import { doc, onSnapshot } from "firebase/firestore";
 import { db } from "./firebaseConfig"; 
+
 
 
 // Lista de atendentes autorizados para o fechamento
@@ -1794,6 +1795,19 @@ const importHasBlockingErrors =
 
   // Estado para controlar se estamos editando uma viagem existente
   const [editingTripId, setEditingTripId] = useState<string | null>(null);
+  const editingTripIdRef = useRef<string | null>(null);
+
+// guarda o último ID válido (não sobrescreve com null automaticamente)
+useEffect(() => {
+  if (editingTripId) {
+    editingTripIdRef.current = editingTripId;
+  }
+}, [editingTripId]);
+
+// ✅ DEBUG: descobrir quem zera o editingTripId (causa do ADD duplicado)
+useEffect(() => {
+  console.log("🧩 editingTripId mudou =>", editingTripId);
+}, [editingTripId]);
 
   // Estado para visualização do Relatório (Modal)
   const [relatorioViagem, setRelatorioViagem] = useState<Viagem | null>(null);
@@ -1955,6 +1969,8 @@ useEffect(() => {
       setState(getFreshState()); // Usa a função auxiliar para garantir data de hoje e hora 07:00
       setLocalText({});
       setEditingTripId(null);
+      editingTripIdRef.current = null;
+
       setOutput("");
       setEncerramentoOutput("");
       setFeedback([]);
@@ -2090,6 +2106,10 @@ const updateTrayField = async <K extends keyof TrayItem>(
     console.error("updateTrayField ERRO:", err);
   }
 };
+
+
+
+
 
 /** Adiciona uma nova linha na bandeja (Firestore) */
 const addTrayRow = async () => {
@@ -2477,58 +2497,75 @@ const getTrayIdsForCurrentTrip = (tripId: string) => {
 
 
 
-// --- LÓGICA DE VIAGEM (SALVAR, CARREGAR, EDITAR) - AGORA COM FIRESTORE ---
+// 1. A função salvarViagem fará a comunicação com o Firestore
+const salvarViagem = async (
+  customFeedback?: EncerramentoFeedback[],
+  forceTripId?: string
+) => {
+  if (!currentUser) {
+    alert("Você precisa estar logado para salvar viagens.");
+    throw new Error("Usuário não autenticado.");
+  }
 
-    // 1. A função salvarViagem fará a comunicação com o Firestore
-const salvarViagem = async (customFeedback?: EncerramentoFeedback[]) => {
-    // ... (checa currentUser, define feedbacksToSave) ...
+  const feedbacksToSave =
+    customFeedback !== undefined
+      ? customFeedback
+      : (feedback.length > 0 ? feedback : undefined);
 
-    const feedbacksToSave = customFeedback !== undefined ? customFeedback : (feedback.length > 0 ? feedback : undefined);
+  // ✅ Copia e limpa campos não desejados
+  const stateCopy = JSON.parse(JSON.stringify(state));
+  if (stateCopy.id !== undefined) delete stateCopy.id;
+  if (stateCopy.id_viagem !== undefined) delete stateCopy.id_viagem;
 
-    // 🛑 NOVO BLOCO DE LIMPEZA
-    // 1. Cria uma cópia do objeto de estado para não alterar o estado original.
-    const stateCopy = JSON.parse(JSON.stringify(state)); 
+  const payload: ViagemUpdatePayload = {
+    state: stateCopy,
+    feedbacks: feedbacksToSave || [],
+    destino: state.cities.find(c => c.enabled)?.name || "Programação sem Destino",
+    data_inicio: state.date,
+    data_fim: state.date,
+    orcamento: 0,
+  };
 
-    // 2. Remove as propriedades que o Firestore não aceita/precisa para ADICIONAR.
-    // Se a propriedade existir no objeto (mesmo com valor undefined), ela é removida.
-    if (stateCopy.id !== undefined) delete stateCopy.id;
-    if (stateCopy.id_viagem !== undefined) delete stateCopy.id_viagem;
-    // Fim do NOVO BLOCO DE LIMPEZA
+  // ✅ ID que realmente será usado (ordem importa!)
+  const tripIdToUse = forceTripId ?? editingTripIdRef.current ?? editingTripId ?? null;
 
-    // 1. Prepara o Payload de dados (o que será enviado para o Firestore)
-    const payload: ViagemUpdatePayload = {
-    // Envie o 'state' original aqui, sem fazer JSON.parse/stringify ainda
-    state: state, 
+  console.log(
+    "🧩 salvarViagem -> tripIdToUse:",
+    tripIdToUse,
+    "| ref:",
+    editingTripIdRef.current,
+    "| state:",
+    editingTripId,
+    "| vai:",
+    tripIdToUse ? "UPDATE" : "ADD"
+  );
 
-    feedbacks: feedbacksToSave || [],               
+  try {
+    if (tripIdToUse) {
+      await firestoreService.updateViagem(tripIdToUse, payload);
 
-    destino: state.cities.find(c => c.enabled)?.name || 'Programação sem Destino',
-    data_inicio: state.date, 
-    data_fim: state.date,     
-    orcamento: 0, 
-};
-    
-    // 2. Decide se é Adicionar ou Atualizar
-    try {
-        if (editingTripId) {
-            // ATUALIZAR EXISTENTE
-            await firestoreService.updateViagem(editingTripId, payload);
-            return editingTripId;
-        } else {
-            // CRIAR NOVA
-            // O firestoreService adiciona os campos autor_uid, autor_email e data_criacao
-            const newDocRef = await firestoreService.addViagem(payload); 
-            
-            // O Dashboard (onSnapshot) se atualiza automaticamente, mas precisamos atualizar o estado local 'editingTripId'
-            setEditingTripId(newDocRef.id); 
-            return newDocRef.id;
-        }
-    } catch (error) {
-        console.error("Erro ao salvar/atualizar no Firestore:", error);
-        throw new Error("Falha ao salvar a viagem no servidor. Verifique sua conexão.");
+      // ✅ mantém os dois sincronizados SEMPRE
+      editingTripIdRef.current = tripIdToUse;
+      if (editingTripId !== tripIdToUse) setEditingTripId(tripIdToUse);
+
+      return tripIdToUse;
     }
+
+    // ADD
+    const newDocRef = await firestoreService.addViagem(payload);
+
+    setEditingTripId(newDocRef.id);
+    editingTripIdRef.current = newDocRef.id;
+
+    return newDocRef.id;
+  } catch (error) {
+    console.error("Erro ao salvar/atualizar no Firestore:", error);
+    throw new Error("Falha ao salvar a viagem no servidor. Verifique sua conexão.");
+  }
 };
 
+
+// 2. A função handleManualSave orquestra o salvamento + vinculação da bandeja
 const handleManualSave = async () => {
   try {
     // 1) Salva/atualiza a viagem no Firestore e pega o ID (tripId)
@@ -2578,18 +2615,28 @@ const handleManualSave = async () => {
   }
 };
 
-// --- FUNÇÕES DE CARREGAMENTO (MANTIDAS) ---
+// --- FUNÇÕES DE CARREGAMENTO ---
 // Estas funções continuam usando o estado local (setState, setEditingTripId, etc.) e estão corretas.
 
-const carregarViagem = (viagem: Viagem) => { 
-    // OBS: O tipo 'SavedTrip' deve ser 'Viagem' agora, pois ele vem do firestoreService
-// 1. Preenche todos os campos do formulário
-    setState(viagem.state); 
-    // 2. Define o ID que está sendo editado (para o botão Salvar virar Atualizar)
-    setEditingTripId(viagem.id ?? null);
-    // 3. Muda a visualização para o formulário
-    setActiveTab('form');
+const carregarViagem = (viagem: Viagem) => {
+  const id = viagem.id;
+
+  if (!id) {
+    console.warn("⚠️ carregarViagem: viagem sem id!", viagem);
+    alert("Essa viagem está sem ID (não dá pra editar). Recarregue a página ou revise o mapeamento do Firestore.");
+    return;
+  }
+
+  setState(viagem.state);
+
+  // ✅ CRÍTICO: manter ref e state sincronizados
+  setEditingTripId(id);
+  editingTripIdRef.current = id;
+
+  setActiveTab("form");
 };
+
+
 
 // --- Proteção extra: impedir ações de Histórico sem permissão ---
 // Observação: mesmo que o botão suma/desabilite, isso evita execução acidental por outros caminhos.
@@ -2628,71 +2675,6 @@ const excluirViagemSafe = async (id: string) => {
     console.error("Erro ao excluir viagem:", error);
     alert("Falha ao excluir a viagem. Verifique se você tem permissão.");
   }
-};
-
-
-const carregarParaEncerramento = (viagem: Viagem) => {
-    // 1. Preenche o formulário/estado com os dados da viagem finalizada
-    setState(viagem.state); 
-    
-    // 2. Define o ID da viagem. Isso é útil se houver algum botão de 'Reabrir Viagem'
-    // Apenas abre a aba viagem, "não estamos editando aqui, apenas observando"
-    setEditingTripId(null); 
-    
-    // 3. MUDA PARA A ABA DE ENCERRAMENTO/RELATÓRIO
-    setActiveTab('form');
-};
-
-
-// --- CONCLUSÃO AUTOMÁTICA DE VIAGEM (AGORA ATUALIZA O FIRESTORE) ---
-
-const concluirViagemHistorico = async (viagem: Viagem) => {
-  if (!currentUser) {
-    alert("Você precisa estar logado para concluir viagens.");
-    return;
-  }
-
-  if (!confirm("Deseja concluir esta viagem automaticamente? Isso marcará todos os atendimentos como REALIZADOS no histórico colaborativo.")) {
-    return;
-  }
-
-  const tripId = viagem.id!;
-  const newFeedback: EncerramentoFeedback[] = [];
-
-  viagem.state.cities.forEach((city) => {
-    if (city.enabled && city.name) {
-      city.clients.forEach((cl, clIdx) => {
-        if (cl.name && cl.name.trim() !== "") {
-          newFeedback.push({
-            clientId: `${city.name}-${clIdx}`,
-            cityName: city.name,
-            status: "REALIZADO",
-            attendantName: "",
-          });
-        }
-      });
-    }
-  });
-
-  // 1) Atualiza histórico (feedback)
-  try {
-    await firestoreService.updateViagem(tripId, { feedbacks: newFeedback });
-  } catch (error) {
-    console.error("Erro ao concluir viagem (updateViagem):", error);
-    alert("Falha ao concluir a viagem no servidor.");
-    return;
-  }
-
-  // 2) Desvincula bandeja (remove tripId/tripAt)
-  let cleared = 0;
-  try {
-    cleared = await trayService.clearTripByTripId(tripId);
-    console.log("✅ Itens da bandeja desvinculados:", cleared, "tripId:", tripId);
-  } catch (error) {
-    console.error("⚠️ Viagem concluída, mas falhou ao desvincular bandeja:", error);
-  }
-
-  alert(`Viagem concluída! Bandeja atualizada (${cleared} item(ns) desvinculados).`);
 };
 
 
@@ -2909,8 +2891,8 @@ const confirmarFinalizarEGerarRelatorio = async () => {
 
     
 // 2) Salva no Histórico como Finalizada (com feedbacks)
-// ✅ IMPORTANTE: pegar o tripId retornado pra limpar o vínculo na bandeja
-const tripId = await salvarViagem(feedback);
+// ✅ IMPORTANTE: pegar o tripId retornado (bom p/ log, mas NÃO confiar só nele)
+const tripId = await salvarViagem(feedback, editingTripId ?? undefined);
 
 try {
   const ops = feedback.map(async (fb) => {
@@ -2932,18 +2914,45 @@ try {
 
   await Promise.all(ops);
 
-  // ✅ DEBUG
-  console.log("🧩 FINALIZAR -> tripId usado:", tripId);
+  // ✅ DEBUG: id retornado do histórico
+  console.log("🧩 FINALIZAR -> tripId retornado:", tripId);
 
-  // ✅ PASSO CRÍTICO: limpa o vínculo tripId dos itens que voltaram pra bandeja
-  // (faz o verde sumir sem apagar as ordens)
-  if (tripId) {
-    const cleared = await trayService.clearTripByTripId(tripId);
-    console.log("🧹 FINALIZAR -> tripId removido da bandeja:", { tripId, cleared });
+  // ✅ PASSO 1 (à prova de duplicação):
+  // limpa o(s) tripId que estão PRESOS nos itens da bandeja usados nesse encerramento
+  const byId = new Map(trayItems.map(t => [t.id, t]));
+
+  const tripIdsFromTray = Array.from(
+    new Set(
+      feedback
+        .map(fb => fb.trayItemId)
+        .filter(Boolean)
+        .map(id => byId.get(id as string)?.tripId)
+        .filter((v): v is string => !!v)
+    )
+  );
+
+  console.log("🧩 FINALIZAR -> tripIds encontrados na bandeja:", tripIdsFromTray);
+
+  let totalCleared = 0;
+  for (const tid of tripIdsFromTray) {
+    const cleared = await trayService.clearTripByTripId(tid);
+    console.log(`🧹 FINALIZAR -> clearTripByTripId(${tid}) =`, cleared);
+    totalCleared += cleared;
   }
+
+  // (opcional) fallback se por algum motivo não achou nada na bandeja
+  if (tripIdsFromTray.length === 0 && tripId) {
+    const cleared = await trayService.clearTripByTripId(tripId);
+    console.log("🧹 FINALIZAR -> fallback clearTripByTripId(tripId):", { tripId, cleared });
+    totalCleared += cleared;
+  }
+
+  console.log("✅ FINALIZAR -> totalCleared:", totalCleared);
+
 } catch (e) {
   console.error("Erro ao sincronizar bandeja pós-encerramento:", e);
 }
+
 
 
 
@@ -2953,6 +2962,8 @@ try {
     setState(INITIAL_STATE);
     setLocalText({});
     setEditingTripId(null); // Sai do modo de edição
+    editingTripIdRef.current = null;
+
     setFeedback([]); // Limpa feedbacks locais pois salvamos no histórico
     
     // Restaura a visualização apenas do output
@@ -4084,10 +4095,10 @@ return (
                                           >
                                       <i className="fas fa-plus mr-1"></i> Adicionar Nova Linha
                                     </button>
-                                    
-
+                                  
                                     <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2">
-</div>
+
+                                  </div>
                     </div>
                 </div>
             )}
@@ -4437,15 +4448,18 @@ const canEditArrival = canEditHistory;
   )}
 
   {/* RELATÓRIO (continua permitido para quem vê histórico; somente se finalizada) */}
-  {isFinalized ? (
-    <button
-      onClick={() => setRelatorioViagem(viagem)}
-      className="bg-indigo-50 hover:bg-indigo-600 hover:text-white text-indigo-600 px-4 py-2 rounded-lg text-xs font-black uppercase transition-all flex items-center gap-2"
-      title="Ver relatório"
-    >
-      <i className="fas fa-file-alt"></i> Relatório
-    </button>
-  ) : null}
+{isFinalized ? (
+  <button
+    onClick={() => {
+      setRelatorioViagem(viagem);         // mantém o relatório (se você usa isso em algum modal/tela)
+    }}
+    className="bg-indigo-50 hover:bg-indigo-600 hover:text-white text-indigo-600 px-4 py-2 rounded-lg text-xs font-black uppercase transition-all flex items-center gap-2"
+    title="Ver relatório"
+  >
+    <i className="fas fa-file-alt"></i> Relatório
+  </button>
+) : null}
+
 
   {/* EXCLUIR (bloqueado para tray+history; liberado só para admin/all) */}
   {canEditHistory && (
