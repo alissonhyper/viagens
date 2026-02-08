@@ -39,7 +39,7 @@ const ATTENDANTS = [
   'URIEL',
   'PEDRO',
   'JOÃO',
-  'WILLIANS',
+  'WILLIANS MIKAEL',
   'KÉVEN',
   'AMILE',
   'RAYSSA',
@@ -1287,31 +1287,7 @@ useEffect(() => {
       }, {});
       console.log("🟢 DEBUG tripId por cidade:", byCity);
 
-      // =========================
-      // ✅ PASSO 2: foco numa cidade específica
-      // (troque aqui para testar outra)
-      // =========================
-      const targetCity = "JEQUITINHONHA";
-
-      const cityWithTrip = withTrip.filter(
-        (i) => norm(i.city) === norm(targetCity)
-      );
-
-      console.log(`🟢 DEBUG ${targetCity} com tripId:`, cityWithTrip.length);
-
-      if (cityWithTrip.length > 0) {
-        console.table(
-          cityWithTrip.map((i) => ({
-            id: i.id,
-            city: i.city,
-            client: i.clientName,
-            status: i.status,
-            tripId: i.tripId,
-            tripAt: i.tripAt,
-          }))
-        );
-      }
-      // =========================
+     
 
       setTrayItems(items);
     },
